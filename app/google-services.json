@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "583183908319",
+    "project_id": "candouit",
+    "storage_bucket": "candouit.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:583183908319:android:79f8adaf1b7d4277d2586a",
+        "android_client_info": {
+          "package_name": "com.example.fitnessapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCA8xQuLmlsN_s33j2UT5KUscgqR4o3s78"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

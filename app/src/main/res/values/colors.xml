@@ -1,0 +1,7 @@
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="launcher_background">#0F172A</color>
+    <color name="launcher_accent">#F97316</color>
+    <color name="launcher_accent_soft">#FDBA74</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>

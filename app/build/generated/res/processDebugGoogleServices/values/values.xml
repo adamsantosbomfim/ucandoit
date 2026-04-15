@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="gcm_defaultSenderId" translatable="false">583183908319</string>
+    <string name="google_api_key" translatable="false">AIzaSyCA8xQuLmlsN_s33j2UT5KUscgqR4o3s78</string>
+    <string name="google_app_id" translatable="false">1:583183908319:android:79f8adaf1b7d4277d2586a</string>
+    <string name="google_crash_reporting_api_key" translatable="false">AIzaSyCA8xQuLmlsN_s33j2UT5KUscgqR4o3s78</string>
+    <string name="google_storage_bucket" translatable="false">candouit.firebasestorage.app</string>
+    <string name="project_id" translatable="false">candouit</string>
+</resources>
