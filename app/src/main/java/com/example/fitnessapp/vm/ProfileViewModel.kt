@@ -22,7 +22,15 @@ class ProfileViewModel : ViewModel() {
             else repo.observeProfile(id)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    fun save(age: Int, goal: String, heightCm: Int, weightKg: Float, notifications: Boolean) {
+    fun save(
+        age: Int,
+        goal: String,
+        heightCm: Int,
+        weightKg: Float,
+        notifications: Boolean,
+        avatarPath: String = profile.value?.avatarPath.orEmpty(),
+        hydrationReminderMinutes: Int = profile.value?.hydrationReminderMinutes ?: 0
+    ) {
         val uid = Session.userId.value ?: return
         viewModelScope.launch {
             val profileData = ProfileEntity(
@@ -30,7 +38,9 @@ class ProfileViewModel : ViewModel() {
                 goal = goal,
                 heightCm = heightCm,
                 weightKg = weightKg,
-                notificationsEnabled = notifications
+                notificationsEnabled = notifications,
+                avatarPath = avatarPath,
+                hydrationReminderMinutes = hydrationReminderMinutes
             )
             repo.upsertProfile(uid, profileData)
         }

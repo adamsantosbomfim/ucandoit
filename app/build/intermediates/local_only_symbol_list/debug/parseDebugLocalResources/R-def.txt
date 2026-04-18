@@ -7,6 +7,20 @@ color launcher_background
 color white
 drawable ic_launcher_background
 drawable ic_launcher_foreground
+drawable widget_motivation_bg
+drawable widget_motivation_chip_bg
+id widget_calories_progress
+id widget_calories_value
+id widget_hydration_progress
+id widget_hydration_value
+id widget_message
+id widget_refresh
+id widget_root
+id widget_subtitle
+id widget_title
+id widget_training_progress
+id widget_training_value
+layout widget_motivation
 mipmap ic_launcher
 mipmap ic_launcher_round
 string app_name
@@ -18,3 +32,4 @@ string google_storage_bucket
 string project_id
 style Theme.App.Starting
 xml file_paths
+xml motivation_widget_info

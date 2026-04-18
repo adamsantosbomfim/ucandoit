@@ -2,6 +2,7 @@ package com.example.fitnessapp.vm
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.fitnessapp.data.HydrationEntity
 import com.example.fitnessapp.data.MealEntity
 import com.example.fitnessapp.data.RepoProvider
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -19,5 +20,11 @@ class HistoryViewModel : ViewModel() {
         Session.userId.flatMapLatest { id ->
             if (id == null) flowOf(emptyMap())
             else repo.observeAllMealsHistory(id)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    val hydrationHistory: StateFlow<Map<String, HydrationEntity>> =
+        Session.userId.flatMapLatest { id ->
+            if (id == null) flowOf(emptyMap())
+            else repo.observeAllHydrationHistory(id)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 }

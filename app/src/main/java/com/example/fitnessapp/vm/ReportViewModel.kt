@@ -1,4 +1,4 @@
-package com.example.fitnessapp.vm
+﻿package com.example.fitnessapp.vm
 
 import android.content.Context
 import android.content.Intent
@@ -32,7 +32,7 @@ class ReportViewModel : ViewModel() {
                 val meals = repo.observeMeals(userId).first()
                 val workouts = repo.observeWorkouts(userId).first()
 
-                val file = File(context.cacheDir, "Relatorio_Fitness.pdf")
+                val file = File(context.cacheDir, "Relatório_Fitness.pdf")
                 val writer = PdfWriter(file)
                 val pdf = PdfDocument(writer)
                 val document = Document(pdf)
@@ -106,3 +106,4 @@ class ReportViewModel : ViewModel() {
         context.startActivity(Intent.createChooser(intent, "Abrir Relatório"))
     }
 }
+

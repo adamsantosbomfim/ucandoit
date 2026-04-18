@@ -29,7 +29,6 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:testOnly="true"
         android:theme="@style/Theme.App.Starting" >
         <activity
             android:name="com.example.fitnessapp.MainActivity"
@@ -55,6 +54,18 @@
         <receiver
             android:name="com.example.fitnessapp.HydrationReminderReceiver"
             android:exported="false" />
+        <receiver
+            android:name="com.example.fitnessapp.MotivationWidgetProvider"
+            android:exported="true"
+            android:label="Widget Motivacional" >
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/motivation_widget_info" />
+        </receiver>
 
         <activity
             android:name="com.google.firebase.auth.internal.GenericIdpActivity"

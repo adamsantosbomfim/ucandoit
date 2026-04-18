@@ -34,6 +34,19 @@
         <receiver
             android:name=".HydrationReminderReceiver"
             android:exported="false" />
+
+        <receiver
+            android:name=".MotivationWidgetProvider"
+            android:exported="true"
+            android:label="Widget Motivacional">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/motivation_widget_info" />
+        </receiver>
     </application>
 
 </manifest>

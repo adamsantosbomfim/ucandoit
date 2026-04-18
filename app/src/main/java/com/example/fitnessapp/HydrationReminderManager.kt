@@ -1,4 +1,4 @@
-package com.example.fitnessapp
+﻿package com.example.fitnessapp
 
 import android.Manifest
 import android.app.AlarmManager
@@ -8,6 +8,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -23,8 +24,9 @@ object HydrationReminderManager {
     private const val KEY_CONSUMED_ML = "hydration_consumed_ml"
     private const val KEY_GOAL_ML = "hydration_goal_ml"
     private const val KEY_NOTIFICATIONS_ENABLED = "hydration_notifications_enabled"
+    private const val KEY_INTERVAL_MINUTES = "hydration_interval_minutes"
     private const val CHANNEL_ID = "hydration_reminders"
-    private const val CHANNEL_NAME = "Lembretes de Agua"
+    private const val CHANNEL_NAME = "Lembretes de Água"
     private const val REQUEST_CODE = 4012
 
     fun ensureChannel(context: Context) {
@@ -36,18 +38,25 @@ object HydrationReminderManager {
             CHANNEL_NAME,
             NotificationManager.IMPORTANCE_DEFAULT
         ).apply {
-            description = "Lembretes para beber agua durante o dia"
+            description = "Lembretes para beber água durante o dia"
         }
         manager.createNotificationChannel(channel)
     }
 
-    fun syncState(context: Context, consumedMl: Int, goalMl: Int, notificationsEnabled: Boolean) {
+    fun syncState(
+        context: Context,
+        consumedMl: Int,
+        goalMl: Int,
+        notificationsEnabled: Boolean,
+        intervalMinutes: Int = 0
+    ) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit()
             .putString(KEY_DATE, todayKey())
             .putInt(KEY_CONSUMED_ML, consumedMl)
             .putInt(KEY_GOAL_ML, goalMl)
             .putBoolean(KEY_NOTIFICATIONS_ENABLED, notificationsEnabled)
+            .putInt(KEY_INTERVAL_MINUTES, intervalMinutes)
             .apply()
 
         scheduleNextReminder(context)
@@ -61,6 +70,7 @@ object HydrationReminderManager {
         val savedDate = prefs.getString(KEY_DATE, today)
         val goalMl = prefs.getInt(KEY_GOAL_ML, 2500).coerceAtLeast(1000)
         val consumedMl = if (savedDate == today) prefs.getInt(KEY_CONSUMED_ML, 0) else 0
+        val intervalMinutes = prefs.getInt(KEY_INTERVAL_MINUTES, 0)
 
         if (!notificationsEnabled || !notificationsPermissionGranted(context)) {
             cancelReminder(context)
@@ -70,20 +80,19 @@ object HydrationReminderManager {
         val triggerAtMillis = if (consumedMl >= goalMl) {
             nextMorningAt(8, 0)
         } else {
-            nextReminderDuringDay()
+            nextReminderDuringDay(intervalMinutes)
         }
 
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
         val pendingIntent = reminderPendingIntent(context)
         alarmManager.cancel(pendingIntent)
         runCatching {
-            alarmManager.setAndAllowWhileIdle(
+            alarmManager.setExactAndAllowWhileIdle(
                 AlarmManager.RTC_WAKEUP,
                 triggerAtMillis,
                 pendingIntent
             )
         }.onFailure {
-            // Fallback for devices/restrictions where idle scheduling is blocked.
             alarmManager.set(
                 AlarmManager.RTC_WAKEUP,
                 triggerAtMillis,
@@ -113,14 +122,16 @@ object HydrationReminderManager {
 
     fun notificationChannelId(): String = CHANNEL_ID
 
+    fun notificationTitle(): String = "UcandoIt • Hora da hidratação"
+
     fun reminderMessage(context: Context): String {
         val (consumedMl, goalMl) = currentHydration(context)
         val remainingMl = (goalMl - consumedMl).coerceAtLeast(0)
         val messages = listOf(
-            "Hora de beber agua. Um copo agora ja ajuda a manter o foco e a energia.",
-            "Seu corpo agradece: toma agua agora e aproxima-te da tua meta de hoje.",
-            "Pequeno lembrete fitness: hidrata-te agora para continuar no ritmo certo.",
-            "Bora beber agua? Faltam so ${remainingMl} ml para bater a meta de hoje."
+            "Hora de cuidar de ti. Um copo de água agora já ajuda na energia e no foco.",
+            "UcandoIt lembra: hidrata-te agora para manter o ritmo do teu dia.",
+            "Pequeno passo, grande efeito. Beber água agora aproxima-te da tua meta.",
+            "Faltam só ${remainingMl} ml para fechares a tua meta de água de hoje."
         )
         return messages[(System.currentTimeMillis() / 1000L % messages.size).toInt()]
     }
@@ -137,12 +148,17 @@ object HydrationReminderManager {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val title = notificationTitle()
         val message = reminderMessage(context)
+        NotificationCenterManager.addNotification(context, title, message)
+
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle("Hora de beber agua")
+            .setLargeIcon(BitmapFactory.decodeResource(context.resources, R.mipmap.ic_launcher))
+            .setContentTitle(title)
             .setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+            .setSubText("Lembrete inteligente de água")
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
@@ -161,8 +177,12 @@ object HydrationReminderManager {
         )
     }
 
-    private fun nextReminderDuringDay(): Long {
+    private fun nextReminderDuringDay(intervalMinutes: Int): Long {
         val calendar = Calendar.getInstance()
+        val effectiveIntervalMinutes = when (intervalMinutes) {
+            1, 10, 20, 60 -> intervalMinutes
+            else -> 120
+        }
         when {
             calendar.get(Calendar.HOUR_OF_DAY) < 8 -> {
                 calendar.set(Calendar.HOUR_OF_DAY, 8)
@@ -173,7 +193,7 @@ object HydrationReminderManager {
                 return calendar.timeInMillis
             }
             else -> {
-                calendar.add(Calendar.HOUR_OF_DAY, 2)
+                calendar.add(Calendar.MINUTE, effectiveIntervalMinutes)
                 if (calendar.get(Calendar.HOUR_OF_DAY) >= 22) {
                     calendar.timeInMillis = nextMorningAt(8, 0)
                     return calendar.timeInMillis
@@ -208,3 +228,4 @@ object HydrationReminderManager {
             ) == PackageManager.PERMISSION_GRANTED
     }
 }
+

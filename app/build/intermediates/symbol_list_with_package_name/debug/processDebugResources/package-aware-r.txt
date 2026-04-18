@@ -157,6 +157,8 @@ drawable notification_template_icon_bg
 drawable notification_template_icon_low_bg
 drawable notification_tile_bg
 drawable notify_panel_notification_icon_bg
+drawable widget_motivation_bg
+drawable widget_motivation_chip_bg
 id accessibility_action_clickable_span
 id accessibility_custom_action_0
 id accessibility_custom_action_1
@@ -260,6 +262,17 @@ id view_tree_on_back_pressed_dispatcher_owner
 id view_tree_saved_state_registry_owner
 id view_tree_view_model_store_owner
 id wide
+id widget_calories_progress
+id widget_calories_value
+id widget_hydration_progress
+id widget_hydration_value
+id widget_message
+id widget_refresh
+id widget_root
+id widget_subtitle
+id widget_title
+id widget_training_progress
+id widget_training_value
 id wrapped_composition_tag
 integer default_icon_animation_duration
 integer google_play_services_version
@@ -277,6 +290,7 @@ layout notification_template_icon_group
 layout notification_template_part_chronometer
 layout notification_template_part_time
 layout splash_screen_view
+layout widget_motivation
 mipmap ic_launcher
 mipmap ic_launcher_round
 raw firebase_common_keep
@@ -440,3 +454,4 @@ styleable Navigator android_label android_id route
 styleable SignInButton buttonSize colorScheme scopeUris
 xml file_paths
 xml image_share_filepaths
+xml motivation_widget_info

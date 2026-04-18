@@ -149,6 +149,25 @@ class AppRepository {
         db.child("hydration").child(uid).child(today).setValue(hydration).await()
     }
 
+    fun observeAllHydrationHistory(uid: String): Flow<Map<String, HydrationEntity>> = callbackFlow {
+        val ref = db.child("hydration").child(uid)
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val history = snapshot.children.associate { daySnap ->
+                    val key = daySnap.key ?: ""
+                    key to (daySnap.getValue(HydrationEntity::class.java) ?: HydrationEntity())
+                }
+                trySend(history)
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                close(error.toException())
+            }
+        }
+        ref.addValueEventListener(listener)
+        awaitClose { ref.removeEventListener(listener) }
+    }
+
     // -------- Meals (with History Support) --------
     fun observeMeals(uid: String): Flow<List<MealEntity>> = callbackFlow {
         val today = getTodayDate()
@@ -247,5 +266,56 @@ class AppRepository {
         val ref = db.child("workouts").child(uid).child(workoutId)
         val workout = WorkoutEntity(id = workoutId, title = title, durationMin = duration, caloriesBurned = kcal, dateTime = dateTime)
         ref.setValue(workout).await()
+    }
+
+    // -------- Body Metrics --------
+    fun observeBodyMetrics(uid: String): Flow<List<BodyMetricsEntity>> = callbackFlow {
+        val ref = db.child("body_metrics").child(uid)
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val metrics = snapshot.children.mapNotNull {
+                    val item = it.getValue(BodyMetricsEntity::class.java)
+                    item?.id = it.key ?: ""
+                    item
+                }
+                trySend(metrics.sortedByDescending { it.createdAtEpochMs })
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                close(error.toException())
+            }
+        }
+        ref.addValueEventListener(listener)
+        awaitClose { ref.removeEventListener(listener) }
+    }
+
+    suspend fun addBodyMetrics(
+        uid: String,
+        weightKg: Float,
+        waistCm: Float,
+        chestCm: Float,
+        armCm: Float,
+        note: String,
+        photoPath: String
+    ) {
+        val ref = db.child("body_metrics").child(uid).push()
+        val metrics = BodyMetricsEntity(
+            id = ref.key!!,
+            weightKg = weightKg,
+            waistCm = waistCm,
+            chestCm = chestCm,
+            armCm = armCm,
+            note = note,
+            photoPath = photoPath
+        )
+        ref.setValue(metrics).await()
+    }
+
+    suspend fun updateBodyMetrics(uid: String, entry: BodyMetricsEntity) {
+        db.child("body_metrics").child(uid).child(entry.id).setValue(entry).await()
+    }
+
+    suspend fun deleteBodyMetrics(uid: String, entryId: String) {
+        db.child("body_metrics").child(uid).child(entryId).removeValue().await()
     }
 }

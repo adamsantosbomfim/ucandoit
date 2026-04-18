@@ -4,6 +4,7 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.graphics.BitmapFactory
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 
@@ -21,14 +22,20 @@ class HydrationReminderReceiver : BroadcastReceiver() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
+            val title = HydrationReminderManager.notificationTitle()
+            val message = HydrationReminderManager.reminderMessage(context)
+            NotificationCenterManager.addNotification(context, title, message)
+
             val notification = NotificationCompat.Builder(
                 context,
                 HydrationReminderManager.notificationChannelId()
             )
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentTitle("Hora de beber agua")
-                .setContentText(HydrationReminderManager.reminderMessage(context))
-                .setStyle(NotificationCompat.BigTextStyle().bigText(HydrationReminderManager.reminderMessage(context)))
+                .setLargeIcon(BitmapFactory.decodeResource(context.resources, R.mipmap.ic_launcher))
+                .setContentTitle(title)
+                .setContentText(message)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+                .setSubText("Mantém a tua meta em dia")
                 .setContentIntent(pendingIntent)
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
@@ -38,5 +45,6 @@ class HydrationReminderReceiver : BroadcastReceiver() {
         }
 
         HydrationReminderManager.scheduleNextReminder(context)
+        MotivationWidgetProvider.requestRefresh(context)
     }
 }

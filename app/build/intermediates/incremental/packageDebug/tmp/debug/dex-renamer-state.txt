@@ -1,4 +1,4 @@
-#Thu Apr 16 00:22:16 WEST 2026
+#Sat Apr 18 14:41:08 WEST 2026
 base.0=C\:\\Users\\Utilizador\\Downloads\\fintessapp_with_db\\app\\build\\intermediates\\dex\\debug\\mergeExtDexDebug\\classes.dex
 base.1=C\:\\Users\\Utilizador\\Downloads\\fintessapp_with_db\\app\\build\\intermediates\\dex\\debug\\mergeProjectDexDebug\\0\\classes.dex
 base.2=C\:\\Users\\Utilizador\\Downloads\\fintessapp_with_db\\app\\build\\intermediates\\dex\\debug\\mergeProjectDexDebug\\10\\classes.dex

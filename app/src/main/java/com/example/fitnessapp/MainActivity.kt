@@ -1,9 +1,13 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+﻿@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 
 package com.example.fitnessapp
 
 import android.Manifest
+import android.content.Context
 import android.app.TimePickerDialog
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -14,6 +18,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -36,13 +41,17 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -51,14 +60,20 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.fitnessapp.data.MealEntity
 import com.example.fitnessapp.data.ProfileEntity
+import com.example.fitnessapp.data.BodyMetricsEntity
 import com.example.fitnessapp.data.WorkoutEntity
 import com.example.fitnessapp.ui.theme.FitnessTheme
 import com.example.fitnessapp.vm.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.net.URLEncoder
+import java.io.File
+import java.io.FileOutputStream
 import java.util.Calendar
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -89,6 +104,10 @@ private sealed class Route(val value: String) {
     data object Profile : Route("profile")
     data object CompleteProfile : Route("complete_profile")
     data object History : Route("history")
+    data object Goals : Route("goals")
+    data object ExerciseLibrary : Route("exercise_library")
+    data object Calendar : Route("calendar")
+    data object BodyMetrics : Route("body_metrics")
 }
 
 /** Bottom tabs */
@@ -124,7 +143,11 @@ private fun App() {
         Route.Training.value,
         Route.Profile.value,
         Route.Daily.value,
-        Route.History.value
+        Route.History.value,
+        Route.Goals.value,
+        Route.ExerciseLibrary.value,
+        Route.Calendar.value,
+        Route.BodyMetrics.value
     )
 
     val userVM: UserViewModel = viewModel()
@@ -140,12 +163,21 @@ private fun App() {
     val userGoal = currentProfile?.goal ?: "Manter Físico"
 
     val sessionUserId by Session.userId.collectAsState()
+    var showAppTour by remember(sessionUserId) { mutableStateOf(false) }
 
     LaunchedEffect(showNav) {
         if (!showNav) {
             drawerCanOpen = false
             drawerState.close()
         }
+    }
+
+    LaunchedEffect(sessionUserId, currentRoute) {
+        val shouldOpenTour = sessionUserId != null && currentRoute == Route.Home.value
+        if (shouldOpenTour && shouldShowAppTour(context, sessionUserId!!)) {
+            showAppTour = true
+        }
+        MotivationWidgetProvider.requestRefresh(context)
     }
 
     val appScaffold: @Composable () -> Unit = {
@@ -253,10 +285,13 @@ private fun App() {
                     })
                 }
                 composable(Route.Training.value) {
-                    TrainingScreen(onOpenDrawer = {
-                        drawerCanOpen = true
-                        scope.launch { drawerState.open() }
-                    })
+                    TrainingScreen(
+                        onOpenDrawer = {
+                            drawerCanOpen = true
+                            scope.launch { drawerState.open() }
+                        },
+                        onOpenLibrary = { nav.navigate(Route.ExerciseLibrary.value) }
+                    )
                 }
                 composable(Route.Profile.value) {
                     ProfileScreen(
@@ -276,6 +311,30 @@ private fun App() {
                 }
                 composable(Route.History.value) {
                     HistoryScreen(onOpenDrawer = {
+                        drawerCanOpen = true
+                        scope.launch { drawerState.open() }
+                    })
+                }
+                composable(Route.Goals.value) {
+                    GoalsProgressScreen(onOpenDrawer = {
+                        drawerCanOpen = true
+                        scope.launch { drawerState.open() }
+                    })
+                }
+                composable(Route.ExerciseLibrary.value) {
+                    EnhancedExerciseLibraryScreen(onOpenDrawer = {
+                        drawerCanOpen = true
+                        scope.launch { drawerState.open() }
+                    })
+                }
+                composable(Route.Calendar.value) {
+                    FitnessCalendarScreen(onOpenDrawer = {
+                        drawerCanOpen = true
+                        scope.launch { drawerState.open() }
+                    })
+                }
+                composable(Route.BodyMetrics.value) {
+                    BodyMetricsPremiumScreen(onOpenDrawer = {
                         drawerCanOpen = true
                         scope.launch { drawerState.open() }
                     })
@@ -365,6 +424,46 @@ private fun App() {
                         icon = { Icon(Icons.Default.PictureAsPdf, contentDescription = null) },
                         modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
                     )
+                    NavigationDrawerItem(
+                        label = { Text("Gráfico de Metas") },
+                        selected = currentRoute == Route.Goals.value,
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            nav.navigate(Route.Goals.value)
+                        },
+                        icon = { Icon(Icons.Default.BarChart, contentDescription = null) },
+                        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                    )
+                    NavigationDrawerItem(
+                        label = { Text("Biblioteca de Exercícios") },
+                        selected = currentRoute == Route.ExerciseLibrary.value,
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            nav.navigate(Route.ExerciseLibrary.value)
+                        },
+                        icon = { Icon(Icons.Default.VideoLibrary, contentDescription = null) },
+                        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                    )
+                    NavigationDrawerItem(
+                        label = { Text("Calendario Fitness") },
+                        selected = currentRoute == Route.Calendar.value,
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            nav.navigate(Route.Calendar.value)
+                        },
+                        icon = { Icon(Icons.Default.CalendarMonth, contentDescription = null) },
+                        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                    )
+                    NavigationDrawerItem(
+                        label = { Text("Peso e Medidas") },
+                        selected = currentRoute == Route.BodyMetrics.value,
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            nav.navigate(Route.BodyMetrics.value)
+                        },
+                        icon = { Icon(Icons.Default.MonitorWeight, contentDescription = null) },
+                        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                    )
                 }
             }
         ) {
@@ -372,6 +471,16 @@ private fun App() {
         }
     } else {
         appScaffold()
+    }
+
+    if (showAppTour && sessionUserId != null) {
+        AppWorldTourDialog(
+            userName = userName,
+            onDismiss = {
+                markAppTourSeen(context, sessionUserId!!)
+                showAppTour = false
+            }
+        )
     }
 }
 /* -------------------- SCREEN SPLASH -------------------- */
@@ -544,6 +653,190 @@ private fun CompleteProfileScreen(onComplete: (Int, String, Int, Float) -> Unit)
                         color = Color(0xFF64748B),
                         fontSize = 14.sp
                     )
+                }
+            }
+        }
+    }
+}
+
+private data class AppTourStep(
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val title: String,
+    val description: String,
+    val accent: Color
+)
+
+@Composable
+private fun AppWorldTourDialog(userName: String, onDismiss: () -> Unit) {
+    val steps = remember {
+        listOf(
+            AppTourStep(
+                icon = Icons.Default.EmojiPeople,
+                title = "Bem-vindo ao UcandoIt",
+                description = "Este tour rápido vai mostrar como usar o app e onde fica cada funcionalidade principal.",
+                accent = Color(0xFFF97316)
+            ),
+            AppTourStep(
+                icon = Icons.Default.Home,
+                title = "Home",
+                description = "Aqui tens o resumo do teu dia, progresso, água, calorias e mensagens inteligentes para te orientar.",
+                accent = Color(0xFF2563EB)
+            ),
+            AppTourStep(
+                icon = Icons.Default.Restaurant,
+                title = "Nutricao",
+                description = "Nesta aba podes registar refeições, acompanhar calorias, água e usar o assistente fitness para sugestões.",
+                accent = Color(0xFF059669)
+            ),
+            AppTourStep(
+                icon = Icons.Default.FitnessCenter,
+                title = "Treinos",
+                description = "Aqui fica o teu plano semanal, vídeos de exercício, conclusão de treino e histórico dos últimos treinos.",
+                accent = Color(0xFFDC2626)
+            ),
+            AppTourStep(
+                icon = Icons.Default.Person,
+                title = "Perfil",
+                description = "No perfil podes ajustar os teus dados, objetivo, notificações e também definir a tua foto.",
+                accent = Color(0xFF7C3AED)
+            ),
+            AppTourStep(
+                icon = Icons.Default.AutoAwesome,
+                title = "Dica final",
+                description = "Usa o app todos os dias. Quanto mais registares treino, refeições e água, mais útil fica o teu acompanhamento.",
+                accent = Color(0xFFEA580C)
+            )
+        )
+    }
+    var currentStep by remember { mutableStateOf(0) }
+    val step = steps[currentStep]
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0x990F172A))
+                .padding(20.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    step.accent.copy(alpha = 0.16f),
+                                    Color.White
+                                )
+                            )
+                        )
+                        .padding(20.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(58.dp)
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(step.accent.copy(alpha = 0.14f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                step.icon,
+                                contentDescription = null,
+                                tint = step.accent,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                if (currentStep == 0) "Ola, $userName" else "Passo ${currentStep + 1} de ${steps.size}",
+                                color = Color(0xFF64748B),
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                            Text(
+                                step.title,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 22.sp,
+                                color = Color(0xFF0F172A)
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(18.dp))
+
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = Color.White.copy(alpha = 0.92f)
+                    ) {
+                        Text(
+                            text = step.description,
+                            modifier = Modifier.padding(16.dp),
+                            color = Color(0xFF334155),
+                            lineHeight = 22.sp,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        steps.forEachIndexed { index, _ ->
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(
+                                        if (index == currentStep) step.accent else Color(0xFFE2E8F0)
+                                    )
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(18.dp))
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (currentStep > 0) {
+                            OutlinedButton(
+                                onClick = { currentStep -= 1 },
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Voltar")
+                            }
+                        }
+
+                        Button(
+                            onClick = {
+                                if (currentStep == steps.lastIndex) onDismiss()
+                                else currentStep += 1
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(if (currentStep == steps.lastIndex) "Comecar" else "Continuar")
+                        }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+
+                    TextButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    ) {
+                        Text("Pular tour")
+                    }
                 }
             }
         }
@@ -782,6 +1075,7 @@ private fun HomeScreen(userName: String, userWeight: Int, userGoal: String, onOp
             userName = userName,
             weightKg = userWeight,
             kcal = kcalConsumedTarget,
+            avatarPath = "",
             onOpenDrawer = onOpenDrawer
         )
 
@@ -843,7 +1137,69 @@ private fun HomeScreen(userName: String, userWeight: Int, userGoal: String, onOp
 }
 
 @Composable
-private fun DashboardHeader(userName: String, weightKg: Int, kcal: Int, onOpenDrawer: () -> Unit) {
+private fun AppAvatar(
+    avatarPath: String,
+    size: androidx.compose.ui.unit.Dp,
+    placeholderIconSize: androidx.compose.ui.unit.Dp,
+    placeholderTint: Color,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val avatarBitmap = remember(avatarPath) { loadAvatarBitmap(context, avatarPath) }
+
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = 0.22f)),
+        contentAlignment = Alignment.Center
+    ) {
+        if (avatarBitmap != null) {
+            Image(
+                bitmap = avatarBitmap.asImageBitmap(),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Icon(
+                Icons.Default.Person,
+                contentDescription = null,
+                tint = placeholderTint,
+                modifier = Modifier.size(placeholderIconSize)
+            )
+        }
+    }
+}
+
+private fun loadAvatarBitmap(context: Context, avatarPath: String): Bitmap? {
+    if (avatarPath.isBlank()) return null
+    return runCatching { BitmapFactory.decodeFile(File(avatarPath).absolutePath) }.getOrNull()
+}
+
+private fun saveAvatarBitmap(context: Context, bitmap: Bitmap): String {
+    val file = File(context.filesDir, "profile_avatar.jpg")
+    FileOutputStream(file).use { output ->
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)
+    }
+    return file.absolutePath
+}
+
+private fun saveAvatarFromUri(context: Context, sourceUri: Uri): String? {
+    val bitmap = context.contentResolver.openInputStream(sourceUri)?.use { input ->
+        BitmapFactory.decodeStream(input)
+    } ?: return null
+    return saveAvatarBitmap(context, bitmap)
+}
+
+@Composable
+private fun DashboardHeader(
+    userName: String,
+    weightKg: Int,
+    kcal: Int,
+    avatarPath: String,
+    onOpenDrawer: () -> Unit
+) {
     val greeting = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
         in 5..11 -> "Bom dia"
         in 12..17 -> "Boa tarde"
@@ -870,7 +1226,7 @@ private fun DashboardHeader(userName: String, weightKg: Int, kcal: Int, onOpenDr
                 }
                 Spacer(Modifier.width(10.dp))
                 Text("$greeting, $userName!", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Icon(Icons.Default.Settings, contentDescription = null, tint = Color.White)
+                NotificationCenterActionButton(iconTint = Color.White)
             }
 
             Spacer(Modifier.height(12.dp))
@@ -881,17 +1237,16 @@ private fun DashboardHeader(userName: String, weightKg: Int, kcal: Int, onOpenDr
             }
         }
 
-        Box(
+        AppAvatar(
+            avatarPath = avatarPath,
+            size = 54.dp,
+            placeholderIconSize = 28.dp,
+            placeholderTint = Color.White,
             modifier = Modifier
                 .align(Alignment.CenterEnd)
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.22f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(Icons.Default.Person, contentDescription = null, tint = Color.White)
-        }
+        )
     }
+
 }
 
 @Composable
@@ -1109,8 +1464,10 @@ private fun HomeOverviewScreen(
     val nutritionViewModel: NutritionViewModel = viewModel()
     val trainingViewModel: TrainingViewModel = viewModel()
     val profileVM: ProfileViewModel = viewModel()
+    val historyVM: HistoryViewModel = viewModel()
     val caloriesToday = nutritionViewModel.caloriesToday.collectAsState().value
     val meals = nutritionViewModel.meals.collectAsState().value
+    val mealHistory = historyVM.mealHistory.collectAsState().value
     val hydration = nutritionViewModel.hydration.collectAsState().value
     val workouts = trainingViewModel.workouts.collectAsState().value
     val profile = profileVM.profile.collectAsState().value
@@ -1127,6 +1484,27 @@ private fun HomeOverviewScreen(
     val weeklyBurnedKcal = workoutsThisWeek.sumOf { it.caloriesBurned }
     val latestMeal = meals.maxByOrNull { it.createdAtEpochMs }
     val latestWorkout = workoutsToday.maxByOrNull { it.createdAtEpochMs }
+    val weekMeals = mealHistory.filterKeys { isDateKeyInCurrentWeek(it) }.values.flatten()
+    val weeklySummary = remember(workoutsThisWeek, weekMeals, weeklyWorkoutGoal, weeklyMinutes, weeklyBurnedKcal) {
+        weeklyAutoSummary(
+            workouts = workoutsThisWeek,
+            meals = weekMeals,
+            weeklyWorkoutGoal = weeklyWorkoutGoal,
+            weeklyMinutes = weeklyMinutes,
+            weeklyBurnedKcal = weeklyBurnedKcal
+        )
+    }
+    val trainingStreak = workoutStreakDays(workouts)
+    val nutritionStreak = mealLoggingStreakDays(meals)
+    val hydrationTodayGoalHit = hydrationNowMl >= hydrationGoalMl
+    val unlockedAchievements = remember(workouts, meals, hydrationNowMl, hydrationGoalMl, weeklyWorkoutGoal) {
+        homeAchievements(
+            workouts = workouts,
+            meals = meals,
+            hydrationGoalHitToday = hydrationTodayGoalHit,
+            weeklyWorkoutGoal = weeklyWorkoutGoal
+        )
+    }
 
     val contentAlpha = remember { Animatable(0f) }
     LaunchedEffect(Unit) { contentAlpha.animateTo(1f, tween(1000)) }
@@ -1136,6 +1514,7 @@ private fun HomeOverviewScreen(
             userName = userName,
             weightKg = userWeight,
             kcal = caloriesToday,
+            avatarPath = profile?.avatarPath.orEmpty(),
             onOpenDrawer = onOpenDrawer
         )
 
@@ -1164,15 +1543,24 @@ private fun HomeOverviewScreen(
             }
 
             item {
+                ProgressHighlightsCard(
+                    trainingStreak = trainingStreak,
+                    nutritionStreak = nutritionStreak,
+                    hydrationGoalHitToday = hydrationTodayGoalHit,
+                    achievements = unlockedAchievements
+                )
+            }
+
+            item {
                 HomeMetricCard(
                     icon = Icons.Default.LocalFireDepartment,
                     title = "Calorias consumidas",
                     valueText = "$caloriesToday kcal",
                     goalText = "$caloriesTarget kcal",
                     supportingText = if (meals.isEmpty()) {
-                        "Ainda nao existem refeicoes registadas hoje."
+                        "Ainda não existem refeições registadas hoje."
                     } else {
-                        "${meals.size} refeicoes hoje • ultima: ${latestMeal?.title ?: "-"}"
+                        "${meals.size} refeições hoje • última: ${latestMeal?.title ?: "-"}"
                     },
                     progress = if (caloriesTarget > 0) caloriesToday / caloriesTarget.toFloat() else 0f
                 )
@@ -1181,11 +1569,11 @@ private fun HomeOverviewScreen(
             item {
                 HomeMetricCard(
                     icon = Icons.Default.WaterDrop,
-                    title = "Hidratacao",
+                    title = "Hidratação",
                     valueText = formatWaterLiters(hydrationNowMl),
                     goalText = formatWaterLiters(hydrationGoalMl),
                     supportingText = if (hydrationNowMl >= hydrationGoalMl) {
-                        "Meta de agua concluida hoje."
+                        "Meta de água concluída hoje."
                     } else {
                         "Faltam ${formatWaterLiters((hydrationGoalMl - hydrationNowMl).coerceAtLeast(0))} para bater a meta."
                     },
@@ -1220,7 +1608,395 @@ private fun HomeOverviewScreen(
                     weeklyBurnedKcal = weeklyBurnedKcal
                 )
             }
+
+            item {
+                WeeklyAutoSummaryCard(summary = weeklySummary)
+            }
         }
+    }
+}
+
+@Composable
+private fun ProgressHighlightsCard(
+    trainingStreak: Int,
+    nutritionStreak: Int,
+    hydrationGoalHitToday: Boolean,
+    achievements: List<HomeAchievement>
+) {
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.linearGradient(
+                        listOf(Color(0xFFFFFBEB), Color(0xFFEFF6FF))
+                    )
+                )
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Conquistas e sequência", fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.weight(1f))
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = Color.White.copy(alpha = 0.9f)
+                ) {
+                    Text(
+                        "${achievements.size} desbloqueadas",
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color(0xFF92400E),
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                AchievementMiniStat("Treino", "${trainingStreak}d", Icons.Default.LocalFireDepartment, Color(0xFF2563EB), Modifier.weight(1f))
+                AchievementMiniStat("Dieta", "${nutritionStreak}d", Icons.Default.Restaurant, Color(0xFF16A34A), Modifier.weight(1f))
+                AchievementMiniStat("Água", if (hydrationGoalHitToday) "Meta" else "Hoje", Icons.Default.WaterDrop, Color(0xFF0EA5E9), Modifier.weight(1f))
+            }
+
+            achievements.take(3).forEach { achievement ->
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color.White.copy(alpha = 0.94f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(achievement.accent.copy(alpha = 0.14f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(achievement.icon, contentDescription = null, tint = achievement.accent)
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(achievement.title, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+                            Text(achievement.description, style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private data class WeeklyAutoSummary(
+    val headline: String,
+    val supporting: String,
+    val trainingValue: String,
+    val nutritionValue: String,
+    val activeDaysValue: String
+)
+
+@Composable
+private fun WeeklyAutoSummaryCard(summary: WeeklyAutoSummary) {
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.linearGradient(
+                        listOf(Color(0xFFF8FAFC), Color(0xFFEEF2FF))
+                    )
+                )
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color.White),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Insights, contentDescription = null, tint = Color(0xFF4F46E5))
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Resumo automático da semana", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    Text(summary.headline, color = Color(0xFF475569), style = MaterialTheme.typography.bodySmall)
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                AssistantMiniStat("Treino", summary.trainingValue, Modifier.weight(1f))
+                AssistantMiniStat("Dieta", summary.nutritionValue, Modifier.weight(1f))
+                AssistantMiniStat("Ativos", summary.activeDaysValue, Modifier.weight(1f))
+            }
+
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color.White.copy(alpha = 0.92f)
+            ) {
+                Text(
+                    summary.supporting,
+                    modifier = Modifier.padding(12.dp),
+                    color = Color(0xFF334155),
+                    style = MaterialTheme.typography.bodySmall,
+                    lineHeight = 20.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AchievementMiniStat(
+    label: String,
+    value: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    accent: Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        color = Color.White.copy(alpha = 0.9f)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Icon(icon, contentDescription = null, tint = accent)
+            Text(value, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+            Text(label, style = MaterialTheme.typography.labelSmall, color = Color(0xFF64748B))
+        }
+    }
+}
+
+private data class HomeAchievement(
+    val title: String,
+    val description: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val accent: Color
+)
+
+private fun homeAchievements(
+    workouts: List<WorkoutEntity>,
+    meals: List<MealEntity>,
+    hydrationGoalHitToday: Boolean,
+    weeklyWorkoutGoal: Int
+): List<HomeAchievement> {
+    val achievements = mutableListOf<HomeAchievement>()
+    val workoutDays = workouts.map { dayKey(it.createdAtEpochMs) }.distinct().size
+    val weekWorkouts = workouts.filter { isInCurrentWeek(it.createdAtEpochMs) }.map { dayKey(it.createdAtEpochMs) }.distinct().size
+
+    if (hydrationGoalHitToday) {
+        achievements += HomeAchievement(
+            title = "Meta de água concluída",
+            description = "Hoje já bateste a meta de hidratação.",
+            icon = Icons.Default.WaterDrop,
+            accent = Color(0xFF0EA5E9)
+        )
+    }
+    if (meals.size >= 3) {
+        achievements += HomeAchievement(
+            title = "Dieta consistente",
+            description = "Já registaste pelo menos 3 refeições hoje.",
+            icon = Icons.Default.Restaurant,
+            accent = Color(0xFF16A34A)
+        )
+    }
+    if (workoutDays >= 1) {
+        achievements += HomeAchievement(
+            title = "Primeiros treinos feitos",
+            description = "O teu histórico já mostra progresso real.",
+            icon = Icons.Default.EmojiEvents,
+            accent = Color(0xFFF59E0B)
+        )
+    }
+    if (weekWorkouts >= weeklyWorkoutGoal && weeklyWorkoutGoal > 0) {
+        achievements += HomeAchievement(
+            title = "Meta semanal batida",
+            description = "Concluíste a meta de treinos da semana.",
+            icon = Icons.Default.MilitaryTech,
+            accent = Color(0xFF7C3AED)
+        )
+    }
+
+    return if (achievements.isEmpty()) {
+        listOf(
+            HomeAchievement(
+                title = "Tudo pronto para evoluir",
+                description = "Regista treino, refeições e água para começares a desbloquear conquistas.",
+                icon = Icons.Default.AutoAwesome,
+                accent = Color(0xFF2563EB)
+            )
+        )
+    } else {
+        achievements
+    }
+}
+
+private fun workoutStreakDays(workouts: List<WorkoutEntity>): Int {
+    val workoutDates = workouts.map { dayKey(it.createdAtEpochMs) }.distinct().toSet()
+    var streak = 0
+    var cursor = Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }
+    while (workoutDates.contains(dayKey(cursor.timeInMillis))) {
+        streak += 1
+        cursor.add(Calendar.DAY_OF_YEAR, -1)
+    }
+    return streak
+}
+
+private fun mealLoggingStreakDays(meals: List<MealEntity>): Int {
+    if (meals.isEmpty()) return 0
+    val mealDates = meals.map { dayKey(it.createdAtEpochMs) }.distinct().toSet()
+    var streak = 0
+    var cursor = Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }
+    while (mealDates.contains(dayKey(cursor.timeInMillis))) {
+        streak += 1
+        cursor.add(Calendar.DAY_OF_YEAR, -1)
+    }
+    return streak
+}
+
+@Composable
+private fun NotificationCenterDialog(
+    notifications: List<AppNotificationItem>,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = Color.White,
+            tonalElevation = 8.dp,
+            shadowElevation = 18.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 560.dp)
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Notificações", fontWeight = FontWeight.Bold, fontSize = 20.sp, modifier = Modifier.weight(1f))
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Fechar")
+                    }
+                }
+
+                if (notifications.isEmpty()) {
+                    Text(
+                        "Ainda não tens notificações por ver.",
+                        color = Color(0xFF64748B),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                } else {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        items(notifications.take(10)) { item ->
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = if (item.read) Color(0xFFF8FAFC) else Color(0xFFE0F2FE)
+                            ) {
+                                Column(Modifier.padding(14.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            item.title,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF0F172A),
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Text(
+                                            notificationTimeLabel(item.createdAtEpochMs),
+                                            color = Color(0xFF64748B),
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(
+                                        item.message,
+                                        color = Color(0xFF334155),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NotificationCenterActionButton(iconTint: Color = LocalContentColor.current) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var showNotifications by remember { mutableStateOf(false) }
+    var unreadCount by remember { mutableIntStateOf(NotificationCenterManager.unreadCount(context)) }
+    var notifications by remember { mutableStateOf(NotificationCenterManager.latestNotifications(context)) }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                unreadCount = NotificationCenterManager.unreadCount(context)
+                notifications = NotificationCenterManager.latestNotifications(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    BadgedBox(
+        badge = {
+            if (unreadCount > 0) {
+                Badge(containerColor = Color(0xFFDC2626)) {
+                    Text(unreadCount.coerceAtMost(99).toString())
+                }
+            }
+        }
+    ) {
+        IconButton(
+            onClick = {
+                notifications = NotificationCenterManager.latestNotifications(context)
+                unreadCount = NotificationCenterManager.unreadCount(context)
+                showNotifications = true
+            }
+        ) {
+            Icon(Icons.Default.Notifications, contentDescription = "Central de notificações", tint = iconTint)
+        }
+    }
+
+    if (showNotifications) {
+        NotificationCenterDialog(
+            notifications = notifications.take(10),
+            onDismiss = {
+                NotificationCenterManager.markAllAsRead(context)
+                unreadCount = 0
+                notifications = NotificationCenterManager.latestNotifications(context)
+                showNotifications = false
+            }
+        )
     }
 }
 
@@ -1273,8 +2049,8 @@ private fun DailyOverviewScreen(onOpenDrawer: () -> Unit) {
                         Text("Visao geral", fontWeight = FontWeight.Bold, fontSize = 17.sp)
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            if (dailyItems.isEmpty()) "Ainda nao existe atividade registada hoje. Comece pela agua, uma refeicao ou um treino."
-                            else "Resumo real do seu dia com alimentacao, hidratacao, treino e perfil atual.",
+                            if (dailyItems.isEmpty()) "Ainda não existe atividade registada hoje. Comece pela água, uma refeição ou um treino."
+                            else "Resumo real do seu dia com alimentação, hidratação, treino e perfil atual.",
                             color = Color(0xFF64748B),
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -1416,27 +2192,27 @@ private fun DashboardMotivationCard(
     val currentMessage = remember(goal, mealCount, waterProgress, hasWorkoutToday, caloriesProgress) {
         when {
             celebrationCount >= 3 ->
-                "Dia forte. Ja estas a acertar em varias frentes e isso vai aparecer no resultado."
+                "Dia forte. Já estás a acertar em várias frentes e isso vai aparecer no resultado."
             hitWaterGoal && hasWorkoutToday ->
-                "Boa! Agua em dia e treino concluido. Hoje foi um dia muito bem jogado."
+                "Boa! Água em dia e treino concluído. Hoje foi um dia muito bem jogado."
             !hasWorkoutToday && !hasMeals ->
-                "Vamos organizar o dia: faz uma boa refeicao e encaixa o treino para ganhar ritmo."
+                "Vamos organizar o dia: faz uma boa refeição e encaixa o treino para ganhar ritmo."
             waterProgress < 0.35f ->
-                "Bebe mais agua agora. Isso ja melhora energia, foco e disposicao."
+                "Bebe mais água agora. Isso já melhora energia, foco e disposição."
             !hasWorkoutToday ->
-                "O treino de hoje ainda esta a tua espera. Faz mesmo que seja uma sessao curta."
+                "O treino de hoje ainda está à tua espera. Faz mesmo que seja uma sessão curta."
             !hasMeals ->
-                "Vamos manter a dieta. Uma refeicao bem feita agora muda o resto do dia."
+                "Vamos manter a dieta. Uma refeição bem feita agora muda o resto do dia."
             hasMeals && !caloriesOnTrack ->
                 "Ajusta as proximas escolhas para manter o dia mais alinhado com a tua meta."
             hasMeals ->
-                "Boa. Ja tens $mealCount refeicao${if (mealCount > 1) "es" else ""} registada${if (mealCount > 1) "s" else ""} hoje."
+                "Boa. Já tens $mealCount refeição${if (mealCount > 1) "es" else ""} registada${if (mealCount > 1) "s" else ""} hoje."
             goal == "Ganhar massa muscular" ->
                 "Forca no plano. Comer bem e treinar forte vao construir resultado."
             goal == "Perder Gordura" || goal == "Perder Peso" ->
-                "Consistencia ganha do impulso. Hoje vale muito."
+                "Consistência ganha ao impulso. Hoje vale muito."
             else ->
-                "Vamos la. Hoje e mais um passo para a tua melhor versao."
+                "Vamos lá. Hoje é mais um passo para a tua melhor versão."
         }
     }
 
@@ -1545,7 +2321,7 @@ private fun DashboardMotivationCard(
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     MotivationStatusChip(
-                        label = if (hitWaterGoal) "Agua ok" else "Agua",
+                        label = if (hitWaterGoal) "Água ok" else "Água",
                         positive = hitWaterGoal,
                         modifier = Modifier.weight(1f)
                     )
@@ -1659,6 +2435,7 @@ private fun NutritionScreen(onOpenDrawer: () -> Unit) {
     val profile = profileVM.profile.collectAsState().value
     var showAssistant by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    var showAssistantHint by remember { mutableStateOf(false) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -1671,18 +2448,27 @@ private fun NutritionScreen(onOpenDrawer: () -> Unit) {
     val waterGoalMl = hydrationGoalMlFor(profile?.weightKg)
     val waterNowMl = hydration.consumedMl.coerceAtLeast(0)
     val waterGoalL = waterGoalMl / 1000f
-    val waterNowL = waterNowMl / 1000f
 
     val alphaAnim = remember { Animatable(0f) }
     LaunchedEffect(Unit) { alphaAnim.animateTo(1f, tween(1000)) }
 
-    LaunchedEffect(profile?.notificationsEnabled, waterNowMl, waterGoalMl) {
+    LaunchedEffect(Unit) {
+        if (shouldShowNutritionAssistantHint(context)) {
+            showAssistantHint = true
+            markNutritionAssistantHintSeen(context)
+            delay(3600)
+            showAssistantHint = false
+        }
+    }
+
+    LaunchedEffect(profile?.notificationsEnabled, profile?.hydrationReminderMinutes, waterNowMl, waterGoalMl) {
         val notificationsEnabled = profile?.notificationsEnabled == true
         HydrationReminderManager.syncState(
             context = context,
             consumedMl = waterNowMl,
             goalMl = waterGoalMl,
-            notificationsEnabled = notificationsEnabled
+            notificationsEnabled = notificationsEnabled,
+            intervalMinutes = profile?.hydrationReminderMinutes ?: 0
         )
 
         if (
@@ -1699,7 +2485,7 @@ private fun NutritionScreen(onOpenDrawer: () -> Unit) {
         CenterAlignedTopAppBar(
             title = { Text("Nutrição", fontWeight = FontWeight.SemiBold) },
             navigationIcon = { IconButton(onClick = onOpenDrawer) { Icon(Icons.Default.Menu, contentDescription = null) } },
-            actions = { IconButton(onClick = {}) { Icon(Icons.Default.Notifications, contentDescription = null) } }
+            actions = { NotificationCenterActionButton() }
         )
 
         LazyColumn(
@@ -1815,9 +2601,9 @@ private fun NutritionScreen(onOpenDrawer: () -> Unit) {
                         Spacer(Modifier.height(8.dp))
                         Text(
                             if (waterNowMl >= waterGoalMl) {
-                                "Meta de agua batida hoje. Os lembretes voltam amanha."
+                                "Meta de água batida hoje. Os lembretes voltam amanhã."
                             } else {
-                                "Lembretes ativos enquanto a meta nao for atingida e as notificacoes estiverem ligadas."
+                                "Lembretes ativos enquanto a meta não for atingida e as notificações estiverem ligadas."
                             },
                             color = Color(0xFF64748B),
                             style = MaterialTheme.typography.bodySmall
@@ -1908,16 +2694,34 @@ private fun NutritionScreen(onOpenDrawer: () -> Unit) {
         }
         }
 
-        NutritionAssistantBubble(
+        Column(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(end = 18.dp, bottom = 22.dp),
-            onClick = { showAssistant = true }
-        )
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            AnimatedVisibility(
+                visible = showAssistantHint,
+                enter = fadeIn(animationSpec = tween(220)) + scaleIn(initialScale = 0.92f),
+                exit = fadeOut(animationSpec = tween(180)) + scaleOut(targetScale = 0.92f)
+            ) {
+                NutritionAssistantHintBalloon(
+                    text = "Toque aqui para receber sugestões inteligentes de refeições."
+                )
+            }
+
+            NutritionAssistantBubble(
+                onClick = {
+                    showAssistantHint = false
+                    showAssistant = true
+                }
+            )
+        }
 
         if (showAssistant) {
             NutritionAssistantDialog(
-                goal = profile?.goal ?: "Manter Fisico",
+                goal = profile?.goal ?: "Manter Físico",
                 caloriesToday = caloriesToday,
                 caloriesTarget = caloriesTarget,
                 onSuggestionClick = { mealType, suggestion ->
@@ -2112,7 +2916,7 @@ private fun NutritionAssistantCard(
                             )
                             Spacer(Modifier.height(10.dp))
                             Text(
-                                "Toque para adicionar esta refeicao ao seu dia.",
+                                "Toque para adicionar esta refeição ao seu dia.",
                                 color = Color(0xFF0F172A),
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Medium
@@ -2236,27 +3040,27 @@ private fun nutritionSuggestionsFor(
             NutritionSuggestion("Panqueca de banana fit", 340, "Aveia, banana e ovo com boa saciedade.")
         )
         "Lanche da manha" -> listOf(
-            NutritionSuggestion("Iogurte proteico com fruta", 170, "Pratico e com boa saciedade sem pesar."),
+            NutritionSuggestion("Iogurte proteico com fruta", 170, "Prático e com boa saciedade sem pesar."),
             NutritionSuggestion("Maca com pasta de amendoim", 190, "Combina fibra com gordura boa."),
-            NutritionSuggestion("Castanhas com queijo fresco", 220, "Lanche funcional e facil de transportar.")
+            NutritionSuggestion("Castanhas com queijo fresco", 220, "Lanche funcional e fácil de transportar.")
         )
         "Almoco" -> listOf(
-            NutritionSuggestion("Frango, arroz e salada", 480, "Prato base fit com proteina magra e carboidrato controlado."),
-            NutritionSuggestion("Peixe com batata doce", 420, "Opcao leve e consistente para o meio do dia."),
-            NutritionSuggestion("Carne magra com legumes", 530, "Melhor escolha quando ainda ha bastante margem calorica.")
+            NutritionSuggestion("Frango, arroz e salada", 480, "Prato base fit com proteína magra e carboidrato controlado."),
+            NutritionSuggestion("Peixe com batata doce", 420, "Opção leve e consistente para o meio do dia."),
+            NutritionSuggestion("Carne magra com legumes", 530, "Melhor escolha quando ainda há bastante margem calórica.")
         )
         "Lanche da tarde" -> listOf(
-            NutritionSuggestion("Sandes integral de peru", 230, "Ajuda a segurar a fome ate a janta."),
-            NutritionSuggestion("Banana com iogurte", 180, "Lanche simples e funcional para energia estavel."),
-            NutritionSuggestion("Tapioca com cottage", 260, "Boa opcao quando o treino ou a janta ainda vao demorar.")
+            NutritionSuggestion("Sandes integral de peru", 230, "Ajuda a segurar a fome até à janta."),
+            NutritionSuggestion("Banana com iogurte", 180, "Lanche simples e funcional para energia estável."),
+            NutritionSuggestion("Tapioca com cottage", 260, "Boa opção quando o treino ou a janta ainda vão demorar.")
         )
         "Janta" -> listOf(
-            NutritionSuggestion("Peixe com legumes", 320, "Janta fit com proteina e volume sem exagero."),
+            NutritionSuggestion("Peixe com legumes", 320, "Janta fit com proteína e volume sem exagero."),
             NutritionSuggestion("Omelete com salada", 280, "Leve e boa para fechar o dia."),
             NutritionSuggestion("Frango desfiado com sopa de legumes", 350, "Mais conforto sem sair do plano.")
         )
         else -> listOf(
-            NutritionSuggestion("Iogurte natural", 110, "Boa opcao leve para nao dormir pesado."),
+            NutritionSuggestion("Iogurte natural", 110, "Boa opção leve para não dormir pesado."),
             NutritionSuggestion("Kiwi com chia", 95, "Baixa caloria com fibra."),
             NutritionSuggestion("Leite magro com canela", 90, "Ajuda a controlar a fome noturna.")
         )
@@ -2266,9 +3070,9 @@ private fun nutritionSuggestionsFor(
         val adjustedCalories = adjustCaloriesToGoal(suggestion.calories, profile).coerceAtMost(mealBudget)
         val finalCalories = adjustedCalories.coerceAtLeast(minSuggestionCaloriesFor(mealType))
         val fitDescription = when (profile) {
-            "light" -> "${suggestion.description} Mantem controle calorico para encaixar melhor na dieta."
+        "light" -> "${suggestion.description} Mantém controlo calórico para encaixar melhor na dieta."
             "build" -> "${suggestion.description} Traz mais energia e proteina para sustentar ganho muscular."
-            else -> "${suggestion.description} Mantem equilibrio entre saciedade e controle calorico."
+            else -> "${suggestion.description} Mantém equilíbrio entre saciedade e controlo calórico."
         }
         suggestion.copy(calories = finalCalories, description = fitDescription)
     }
@@ -2278,7 +3082,7 @@ private fun nutritionSuggestionsFor(
             NutritionSuggestion(
                 "Ceia muito leve",
                 remainingCalories.coerceAtLeast(70),
-                "Seu saldo calorico esta curto. Priorize algo pequeno, proteico e facil de digerir."
+                "O teu saldo calórico está curto. Prioriza algo pequeno, proteico e fácil de digerir."
             )
         )
     } else {
@@ -2352,9 +3156,9 @@ private fun assistantSummaryText(
     mealBudget: Int
 ): String {
     val timingText =
-        if (mealType == currentMealType) "Pelo horario atual, esta e a melhor janela para $mealType."
-        else "Voce pode planejar $mealType desde ja para nao sair da dieta."
-    return "$timingText Objetivo: $goal. Restam $remainingCalories kcal no dia, entao a sugestao mira cerca de $mealBudget kcal."
+        if (mealType == currentMealType) "Pelo horário atual, esta é a melhor janela para $mealType."
+        else "Você pode planear $mealType desde já para não sair da dieta."
+    return "$timingText Objetivo: $goal. Restam $remainingCalories kcal no dia, então a sugestão aponta para cerca de $mealBudget kcal."
 }
 
 private fun recommendedWorkoutSessionsFor(goal: String): Int {
@@ -2362,6 +3166,36 @@ private fun recommendedWorkoutSessionsFor(goal: String): Int {
         "Perder Gordura", "Perder Peso" -> 5
         "Ganhar massa muscular" -> 4
         else -> 4
+    }
+}
+
+@Composable
+private fun NutritionAssistantHintBalloon(text: String) {
+    Column(
+        horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(0.dp)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = Color.White,
+            tonalElevation = 3.dp,
+            shadowElevation = 6.dp
+        ) {
+            Text(
+                text = text,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                color = Color(0xFF0F172A),
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+        Box(
+            modifier = Modifier
+                .padding(end = 22.dp, top = 2.dp)
+                .size(10.dp)
+                .graphicsLayer { rotationZ = 45f }
+                .background(Color.White)
+        )
     }
 }
 
@@ -2420,14 +3254,14 @@ private fun buildDailyItems(
     )
     items += DailyItem(
         icon = Icons.Default.WaterDrop,
-        title = "Hidratacao",
+        title = "Hidratação",
         trailing = formatWaterLiters(hydration.consumedMl.coerceAtLeast(0)),
         subtitle = "Meta atual: ${formatWaterLiters(waterGoalMl)}"
     )
     meals.firstOrNull()?.let { meal ->
         items += DailyItem(
             icon = Icons.Default.Restaurant,
-            title = "Ultima refeicao",
+            title = "Última refeição",
             trailing = "${meal.calories} kcal",
             subtitle = "${meal.title} • ${meal.time}"
         )
@@ -2435,7 +3269,7 @@ private fun buildDailyItems(
     workouts.firstOrNull()?.let { workout ->
         items += DailyItem(
             icon = Icons.Default.FitnessCenter,
-            title = "Ultimo treino",
+            title = "Último treino",
             trailing = "${workout.durationMin} min",
             subtitle = "${workout.title} • ${workout.caloriesBurned} kcal"
         )
@@ -2463,12 +3297,12 @@ private fun nutritionVisualFor(mealType: String, suggestionName: String): Nutrit
         suggestionName.contains("Iogurte", ignoreCase = true) -> NutritionVisualInfo(
             emoji = "🥣",
             caption = "Textura leve com boa saciedade",
-            tags = listOf("Proteina", "Pratico", "Leve"),
+            tags = listOf("Proteína", "Prático", "Leve"),
             colors = listOf(Color(0xFF0F766E), Color(0xFF2DD4BF))
         )
         suggestionName.contains("Panqueca", ignoreCase = true) || suggestionName.contains("Tapioca", ignoreCase = true) -> NutritionVisualInfo(
             emoji = "🥞",
-            caption = "Opcao funcional para energia estavel",
+            caption = "Opção funcional para energia estável",
             tags = listOf("Energia", "Caseiro", "Fit"),
             colors = listOf(Color(0xFFB45309), Color(0xFFF59E0B))
         )
@@ -2480,8 +3314,8 @@ private fun nutritionVisualFor(mealType: String, suggestionName: String): Nutrit
         )
         suggestionName.contains("Peixe", ignoreCase = true) -> NutritionVisualInfo(
             emoji = "🐟",
-            caption = "Refeicao leve e eficiente",
-            tags = listOf("Leve", "Proteina", "Janta"),
+            caption = "Refeição leve e eficiente",
+            tags = listOf("Leve", "Proteína", "Janta"),
             colors = listOf(Color(0xFF1D4ED8), Color(0xFF60A5FA))
         )
         suggestionName.contains("Banana", ignoreCase = true) || suggestionName.contains("Fruta", ignoreCase = true) || suggestionName.contains("Kiwi", ignoreCase = true) || suggestionName.contains("Maca", ignoreCase = true) -> NutritionVisualInfo(
@@ -2493,7 +3327,7 @@ private fun nutritionVisualFor(mealType: String, suggestionName: String): Nutrit
         suggestionName.contains("Omelete", ignoreCase = true) || suggestionName.contains("Ovos", ignoreCase = true) -> NutritionVisualInfo(
             emoji = "🍳",
             caption = "Proteina simples para qualquer horario",
-            tags = listOf("Proteina", "Rapido", "Sustenta"),
+            tags = listOf("Proteína", "Rápido", "Sustenta"),
             colors = listOf(Color(0xFF92400E), Color(0xFFFBBF24))
         )
         else -> {
@@ -2506,7 +3340,7 @@ private fun nutritionVisualFor(mealType: String, suggestionName: String): Nutrit
                 )
                 "Almoco" -> NutritionVisualInfo(
                     emoji = "🍽️",
-                    caption = "Prato principal com foco no objetivo",
+            caption = "Prato principal com foco no objetivo",
                     tags = listOf("Principal", "Completo", "Sacia"),
                     colors = listOf(Color(0xFF7C2D12), Color(0xFFF97316))
                 )
@@ -2518,8 +3352,8 @@ private fun nutritionVisualFor(mealType: String, suggestionName: String): Nutrit
                 )
                 else -> NutritionVisualInfo(
                     emoji = "🥪",
-                    caption = "Lanche inteligente para nao sair da rota",
-                    tags = listOf("Snack", "Pratico", "Fit"),
+            caption = "Lanche inteligente para não sair da rota",
+                    tags = listOf("Snack", "Prático", "Fit"),
                     colors = listOf(Color(0xFF1E3A8A), Color(0xFF38BDF8))
                 )
             }
@@ -2528,10 +3362,2200 @@ private fun nutritionVisualFor(mealType: String, suggestionName: String): Nutrit
     }
 }
 
+private enum class GoalsFilter(val label: String) {
+    WEEK("Semana"),
+    MONTH("Mês"),
+    YEAR("Ano")
+}
+
+private data class GoalProgressSummary(
+    val title: String,
+    val value: String,
+    val subtitle: String,
+    val progress: Float,
+    val accent: Color
+)
+
+private data class ProgressChartBar(
+    val label: String,
+    val value: Float
+)
+
+private data class FitnessCalendarMonthState(
+    val title: String,
+    val monthKey: String,
+    val weekLabels: List<String>,
+    val days: List<FitnessCalendarDayUi>
+)
+
+private data class FitnessCalendarDayUi(
+    val dateKey: String,
+    val dayNumberLabel: String,
+    val prettyLabel: String,
+    val isCurrentMonth: Boolean,
+    val isToday: Boolean,
+    val hasWorkout: Boolean,
+    val mealCount: Int,
+    val hitHydrationGoal: Boolean,
+    val hydrationPercent: Int,
+    val summaryText: String,
+    val workoutTitles: List<String>,
+    val mealTitles: List<String>,
+    val hydrationText: String
+)
+
+private enum class BodyMetricType(
+    val label: String,
+    val startColor: Color,
+    val endColor: Color
+) {
+    Weight("Peso", Color(0xFF4F46E5), Color(0xFF818CF8)),
+    Waist("Cintura", Color(0xFF0EA5E9), Color(0xFF38BDF8)),
+    Chest("Peito", Color(0xFF22C55E), Color(0xFF86EFAC)),
+    Arm("Braço", Color(0xFFF59E0B), Color(0xFFFCD34D));
+
+    fun valueOf(entry: BodyMetricsEntity): Float {
+        return when (this) {
+            Weight -> entry.weightKg
+            Waist -> entry.waistCm
+            Chest -> entry.chestCm
+            Arm -> entry.armCm
+        }
+    }
+}
+
+@Composable
+private fun GoalsProgressScreen(onOpenDrawer: () -> Unit) {
+    val historyVM: HistoryViewModel = viewModel()
+    val trainingVM: TrainingViewModel = viewModel()
+    val profileVM: ProfileViewModel = viewModel()
+    val mealHistory = historyVM.mealHistory.collectAsState().value
+    val workouts = trainingVM.workouts.collectAsState().value
+    val profile = profileVM.profile.collectAsState().value
+    var filter by remember { mutableStateOf(GoalsFilter.WEEK) }
+
+    val caloriesTarget = nutritionCaloriesTargetFor(profile?.goal)
+    val workoutGoalPerWeek = recommendedWorkoutSessionsFor(profile?.goal ?: "Manter Físico")
+    val periodDays = remember(filter) { progressPeriodDays(filter) }
+    val chartBars = remember(filter, workouts, mealHistory) { buildProgressChartBars(filter, workouts, mealHistory) }
+    val summaries = remember(filter, workouts, mealHistory, caloriesTarget, workoutGoalPerWeek) {
+        buildGoalSummaries(
+            filter = filter,
+            workouts = workouts,
+            mealHistory = mealHistory,
+            caloriesTarget = caloriesTarget,
+            workoutGoalPerWeek = workoutGoalPerWeek
+        )
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        CenterAlignedTopAppBar(
+            title = { Text("Gráfico de Metas", fontWeight = FontWeight.SemiBold) },
+            navigationIcon = { IconButton(onClick = onOpenDrawer) { Icon(Icons.Default.Menu, contentDescription = null) } },
+            actions = { NotificationCenterActionButton() }
+        )
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 14.dp),
+            contentPadding = PaddingValues(top = 12.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+                ) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Análise de progresso", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        Text(
+                            "Filtra por semana, mês ou ano para ver se estás a bater as metas e como evoluem as tuas atividades.",
+                            color = Color(0xFF64748B),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            GoalsFilter.values().forEach { option ->
+                                FilterChip(
+                                    selected = filter == option,
+                                    onClick = { filter = option },
+                                    label = { Text(option.label) }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
+                ProgressChartCard(
+                    title = "Atividades por período",
+                    subtitle = "Últimos $periodDays dias",
+                    bars = chartBars
+                )
+            }
+
+            items(summaries) { summary ->
+                GoalSummaryCard(summary = summary)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProgressChartCard(title: String, subtitle: String, bars: List<ProgressChartBar>) {
+    val maxValue = bars.maxOfOrNull { it.value }?.coerceAtLeast(1f) ?: 1f
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(title, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, color = Color(0xFF64748B), style = MaterialTheme.typography.bodySmall)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(160.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.Bottom
+            ) {
+                bars.forEach { bar ->
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Bottom
+                    ) {
+                        Text(bar.value.toInt().toString(), style = MaterialTheme.typography.labelSmall, color = Color(0xFF64748B))
+                        Spacer(Modifier.height(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(((bar.value / maxValue) * 110f).coerceAtLeast(10f).dp)
+                                .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(Color(0xFF0EA5E9), Color(0xFF2563EB))
+                                    )
+                                )
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(bar.label, style = MaterialTheme.typography.labelSmall, color = Color(0xFF475569))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GoalSummaryCard(summary: GoalProgressSummary) {
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(summary.title, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text(summary.value, fontWeight = FontWeight.Bold, color = summary.accent)
+            }
+            LinearProgressIndicator(
+                progress = { summary.progress.coerceIn(0f, 1f) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(999.dp)),
+                color = summary.accent
+            )
+            Text(summary.subtitle, color = Color(0xFF64748B), style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun FitnessCalendarScreen(onOpenDrawer: () -> Unit) {
+    val historyVM: HistoryViewModel = viewModel()
+    val trainingVM: TrainingViewModel = viewModel()
+    val mealHistory = historyVM.mealHistory.collectAsState().value
+    val hydrationHistory = historyVM.hydrationHistory.collectAsState().value
+    val workouts = trainingVM.workouts.collectAsState().value
+    var monthOffset by remember { mutableStateOf(0) }
+    val monthState = remember(monthOffset, mealHistory, hydrationHistory, workouts) {
+        buildFitnessCalendarMonthState(monthOffset, mealHistory, hydrationHistory, workouts)
+    }
+    var selectedDateKey by remember(monthState.monthKey) {
+        mutableStateOf(monthState.days.firstOrNull { it.isCurrentMonth }?.dateKey)
+    }
+    val selectedDay = monthState.days.firstOrNull { it.dateKey == selectedDateKey && it.isCurrentMonth }
+
+    Column(Modifier.fillMaxSize()) {
+        CenterAlignedTopAppBar(
+            title = { Text("Calendario Fitness", fontWeight = FontWeight.SemiBold) },
+            navigationIcon = { IconButton(onClick = onOpenDrawer) { Icon(Icons.Default.Menu, contentDescription = null) } },
+            actions = { NotificationCenterActionButton() }
+        )
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 14.dp),
+            contentPadding = PaddingValues(top = 12.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 10.dp)
+                ) {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { monthOffset -= 1 }) {
+                                Icon(Icons.Default.ChevronLeft, contentDescription = "Mes anterior", tint = Color.White)
+                            }
+                            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(monthState.title, fontWeight = FontWeight.Bold, fontSize = 22.sp, color = Color.White)
+                                Text(
+                                    "Treinos, refeicoes e hidratacao no mesmo calendario.",
+                                    color = Color.White.copy(alpha = 0.72f),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            IconButton(onClick = { monthOffset += 1 }) {
+                                Icon(Icons.Default.ChevronRight, contentDescription = "Proximo mes", tint = Color.White)
+                            }
+                        }
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            CalendarHeroStat("Dias ativos", monthState.days.count { it.hasWorkout || it.mealCount > 0 }.toString(), Modifier.weight(1f))
+                            CalendarHeroStat("Água OK", monthState.days.count { it.hitHydrationGoal }.toString(), Modifier.weight(1f))
+                            CalendarHeroStat("Treinos", monthState.days.count { it.hasWorkout }.toString(), Modifier.weight(1f))
+                        }
+
+                        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                            monthState.weekLabels.forEach { label ->
+                                Text(
+                                    label,
+                                    modifier = Modifier.width(36.dp),
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color.White.copy(alpha = 0.68f),
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+
+                        monthState.days.chunked(7).forEach { week ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                week.forEach { day ->
+                                    FitnessCalendarDayCell(
+                                        day = day,
+                                        selected = day.dateKey == selectedDateKey,
+                                        onClick = {
+                                            if (day.isCurrentMonth) selectedDateKey = day.dateKey
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
+                Card(
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        CalendarLegendItem("Treino", Color(0xFF22C55E), Modifier.weight(1f))
+                        CalendarLegendItem("Dieta", Color(0xFFF59E0B), Modifier.weight(1f))
+                        CalendarLegendItem("Água OK", Color(0xFF0EA5E9), Modifier.weight(1f))
+                    }
+                }
+            }
+
+            if (selectedDay != null) {
+                item {
+                    Card(
+                        shape = RoundedCornerShape(22.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                    ) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(Color(0xFFEEF2FF)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Default.EventNote, contentDescription = null, tint = Color(0xFF4F46E5))
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(selectedDay.prettyLabel, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                                    Text(
+                                        selectedDay.summaryText,
+                                        color = Color(0xFF475569),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                CalendarStatCard("Treino", if (selectedDay.hasWorkout) "Feito" else "Não", Color(0xFF22C55E), Modifier.weight(1f))
+                                CalendarStatCard("Refeicoes", selectedDay.mealCount.toString(), Color(0xFFF59E0B), Modifier.weight(1f))
+                                CalendarStatCard("Água", "${selectedDay.hydrationPercent}%", Color(0xFF0EA5E9), Modifier.weight(1f))
+                            }
+                            CalendarTimelineSection(
+                                title = "Treinos do dia",
+                                emptyText = "Nenhum treino registado.",
+                                items = selectedDay.workoutTitles,
+                                icon = Icons.Default.FitnessCenter,
+                                accent = Color(0xFF22C55E)
+                            )
+                            CalendarTimelineSection(
+                                title = "Refeicoes registadas",
+                                emptyText = "Nenhuma refeicao registada.",
+                                items = selectedDay.mealTitles,
+                                icon = Icons.Default.Restaurant,
+                                accent = Color(0xFFF59E0B)
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(18.dp),
+                                color = Color(0xFFE0F2FE)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.WaterDrop, contentDescription = null, tint = Color(0xFF0284C7))
+                                    Spacer(Modifier.width(10.dp))
+                                    Column {
+                                        Text("Hidratacao do dia", fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+                                        Text(selectedDay.hydrationText, color = Color(0xFF0369A1), style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FitnessCalendarDayCell(
+    day: FitnessCalendarDayUi,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val borderColor = when {
+        selected -> MaterialTheme.colorScheme.primary
+        day.isToday -> Color(0xFFCBD5E1)
+        else -> Color.Transparent
+    }
+    Surface(
+        modifier = Modifier
+            .size(width = 40.dp, height = 56.dp)
+            .clickable(enabled = day.isCurrentMonth, onClick = onClick),
+        shape = RoundedCornerShape(14.dp),
+        color = when {
+            selected -> Color(0xFFEFF6FF)
+            day.hasWorkout && day.hitHydrationGoal -> Color(0xFFF0FDF4)
+            day.isCurrentMonth -> Color.White
+            else -> Color(0xFFF8FAFC)
+        },
+        border = androidx.compose.foundation.BorderStroke(1.dp, borderColor)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                day.dayNumberLabel,
+                color = if (day.isCurrentMonth) Color(0xFF0F172A) else Color(0xFF94A3B8),
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = if (day.isToday) FontWeight.Bold else FontWeight.Medium
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (day.hasWorkout) CalendarMarker(Color(0xFF22C55E))
+                if (day.mealCount > 0) CalendarMarker(Color(0xFFF59E0B))
+                if (day.hitHydrationGoal) CalendarMarker(Color(0xFF0EA5E9))
+            }
+        }
+    }
+}
+
+@Composable
+private fun CalendarHeroStat(label: String, value: String, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        color = Color.White.copy(alpha = 0.08f)
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 12.dp)) {
+            Text(label, color = Color.White.copy(alpha = 0.68f), style = MaterialTheme.typography.labelSmall)
+            Spacer(Modifier.height(4.dp))
+            Text(value, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        }
+    }
+}
+
+@Composable
+private fun CalendarMarker(color: Color) {
+    Box(
+        modifier = Modifier
+            .size(6.dp)
+            .clip(CircleShape)
+            .background(color)
+    )
+}
+
+@Composable
+private fun CalendarLegendItem(label: String, color: Color, modifier: Modifier = Modifier) {
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        CalendarMarker(color)
+        Spacer(Modifier.width(6.dp))
+        Text(label, color = Color(0xFF475569), style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+@Composable
+private fun CalendarStatCard(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        color = color.copy(alpha = 0.10f)
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 12.dp)) {
+            Text(label, color = Color(0xFF64748B), style = MaterialTheme.typography.labelSmall)
+            Spacer(Modifier.height(4.dp))
+            Text(value, color = color, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun BodyMetricsScreen(onOpenDrawer: () -> Unit) {
+    val vm: BodyMetricsViewModel = viewModel()
+    val profileVM: ProfileViewModel = viewModel()
+    val context = LocalContext.current
+    val history = vm.history.collectAsState().value
+    val profile = profileVM.profile.collectAsState().value
+    var weightText by remember(profile, history) { mutableStateOf((history.firstOrNull()?.weightKg ?: profile?.weightKg ?: 0f).toString()) }
+    var waistText by remember(history) { mutableStateOf((history.firstOrNull()?.waistCm ?: 0f).toString()) }
+    var chestText by remember(history) { mutableStateOf((history.firstOrNull()?.chestCm ?: 0f).toString()) }
+    var armText by remember(history) { mutableStateOf((history.firstOrNull()?.armCm ?: 0f).toString()) }
+    var noteText by remember { mutableStateOf("") }
+    var photoPath by remember { mutableStateOf("") }
+    var selectedMetric by remember { mutableStateOf(BodyMetricType.Weight) }
+    var editingEntry by remember { mutableStateOf<BodyMetricsEntity?>(null) }
+    val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            saveAvatarFromUri(context, uri)?.let { savedPath ->
+                photoPath = savedPath
+            }
+        }
+    }
+
+    val latest = history.firstOrNull()
+    val previous = history.getOrNull(1)
+    val chartEntries = history.take(6).reversed()
+
+    Column(Modifier.fillMaxSize()) {
+        CenterAlignedTopAppBar(
+            title = { Text("Peso e Medidas", fontWeight = FontWeight.SemiBold) },
+            navigationIcon = { IconButton(onClick = onOpenDrawer) { Icon(Icons.Default.Menu, contentDescription = null) } },
+            actions = { NotificationCenterActionButton() }
+        )
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 14.dp),
+            contentPadding = PaddingValues(top = 12.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 10.dp)
+                ) {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(54.dp)
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .background(Color.White.copy(alpha = 0.10f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.MonitorWeight, contentDescription = null, tint = Color(0xFFF59E0B), modifier = Modifier.size(28.dp))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Evolucao corporal", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                                Text(
+                                    "Acompanha peso, cintura, peito e braço com um histórico visual claro.",
+                                    color = Color.White.copy(alpha = 0.72f),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            MetricsHeroStat("Peso atual", latest?.weightKg?.let { "${formatMetric(it)} kg" } ?: "--", Modifier.weight(1f))
+                            MetricsHeroStat("Registos", history.size.toString(), Modifier.weight(1f))
+                            MetricsHeroStat("Tendencia", metricsTrendLabel(latest, previous), Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+
+            item {
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Tendencia recente", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        Text(
+                            "Leitura rápida das últimas medições corporais.",
+                            color = Color(0xFF64748B),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(BodyMetricType.values().toList()) { metric ->
+                                FilterChip(
+                                    selected = selectedMetric == metric,
+                                    onClick = { selectedMetric = metric },
+                                    label = { Text(metric.label) }
+                                )
+                            }
+                        }
+                        BodyMetricsMetricChart(entries = chartEntries, metric = selectedMetric)
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            BodyMetricDeltaCard("Cintura", latest?.waistCm, previous?.waistCm, Color(0xFF0EA5E9), Modifier.weight(1f))
+                            BodyMetricDeltaCard("Peito", latest?.chestCm, previous?.chestCm, Color(0xFF22C55E), Modifier.weight(1f))
+                            BodyMetricDeltaCard("Braço", latest?.armCm, previous?.armCm, Color(0xFFF59E0B), Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+
+            item {
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Novo registo corporal", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        Text(
+                            "Guarda um novo ponto da tua evolucao para comparar ao longo do tempo.",
+                            color = Color(0xFF64748B),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        OutlinedTextField(value = weightText, onValueChange = { weightText = it }, label = { Text("Peso (kg)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedTextField(value = waistText, onValueChange = { waistText = it }, label = { Text("Cintura (cm)") }, modifier = Modifier.weight(1f), singleLine = true)
+                            OutlinedTextField(value = chestText, onValueChange = { chestText = it }, label = { Text("Peito (cm)") }, modifier = Modifier.weight(1f), singleLine = true)
+                        }
+                        OutlinedTextField(value = armText, onValueChange = { armText = it }, label = { Text("Braço (cm)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                        OutlinedTextField(value = noteText, onValueChange = { noteText = it }, label = { Text("Observacao (opcional)") }, modifier = Modifier.fillMaxWidth())
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedButton(
+                                onClick = { photoLauncher.launch("image/*") },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(14.dp)
+                            ) {
+                                Icon(Icons.Default.PhotoCamera, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text(if (photoPath.isBlank()) "Adicionar foto" else "Trocar foto")
+                            }
+                            if (photoPath.isNotBlank()) {
+                                Text("Foto pronta", color = Color(0xFF15803D), style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                        Button(
+                            onClick = {
+                                vm.addEntry(
+                                    weightKg = weightText.replace(",", ".").toFloatOrNull() ?: 0f,
+                                    waistCm = waistText.replace(",", ".").toFloatOrNull() ?: 0f,
+                                    chestCm = chestText.replace(",", ".").toFloatOrNull() ?: 0f,
+                                    armCm = armText.replace(",", ".").toFloatOrNull() ?: 0f,
+                                    note = noteText.trim(),
+                                    photoPath = photoPath
+                                )
+                                noteText = ""
+                                photoPath = ""
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Text("Guardar medicao")
+                        }
+                    }
+                }
+            }
+
+            item {
+                        Text("Histórico corporal", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            }
+
+            items(history.take(12)) { entry ->
+                Card(
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                    modifier = Modifier.clickable { editingEntry = entry }
+                ) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(formatMetricsDate(entry.createdAtEpochMs), fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            Text("${formatMetric(entry.weightKg)} kg", color = Color(0xFF4F46E5), fontWeight = FontWeight.Bold)
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            BodyMetricChip("Cintura", "${formatMetric(entry.waistCm)} cm", Modifier.weight(1f))
+                            BodyMetricChip("Peito", "${formatMetric(entry.chestCm)} cm", Modifier.weight(1f))
+                            BodyMetricChip("Braço", "${formatMetric(entry.armCm)} cm", Modifier.weight(1f))
+                        }
+                        if (entry.note.isNotBlank()) {
+                            Text(entry.note, color = Color(0xFF475569), style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (entry.photoPath.isNotBlank()) {
+                            BodyMetricsPhotoPreview(photoPath = entry.photoPath)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (editingEntry != null) {
+        EditBodyMetricsDialog(
+            entry = editingEntry!!,
+            onDismiss = { editingEntry = null },
+            onSave = {
+                vm.updateEntry(it)
+                editingEntry = null
+            },
+            onDelete = {
+                vm.deleteEntry(editingEntry!!.id)
+                editingEntry = null
+            }
+        )
+    }
+}
+
+@Composable
+private fun MetricsHeroStat(label: String, value: String, modifier: Modifier = Modifier) {
+    Surface(modifier = modifier, shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = 0.08f)) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 12.dp)) {
+            Text(label, color = Color.White.copy(alpha = 0.68f), style = MaterialTheme.typography.labelSmall)
+            Spacer(Modifier.height(4.dp))
+            Text(value, color = Color.White, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun BodyMetricsMetricChart(entries: List<BodyMetricsEntity>, metric: BodyMetricType) {
+    val values = entries.map { metric.valueOf(it) }
+    val maxValue = values.maxOrNull()?.coerceAtLeast(1f) ?: 1f
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(150.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.Bottom
+    ) {
+        if (entries.isEmpty()) {
+            Text("Ainda sem dados suficientes para o grafico.", color = Color(0xFF64748B))
+        } else {
+            entries.forEach { entry ->
+                val value = metric.valueOf(entry)
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Bottom
+                ) {
+                    Text(formatMetric(value), style = MaterialTheme.typography.labelSmall, color = Color(0xFF64748B))
+                    Spacer(Modifier.height(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(((value / maxValue) * 95f).coerceAtLeast(16f).dp)
+                            .clip(RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
+                            .background(Brush.verticalGradient(listOf(metric.startColor, metric.endColor)))
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(SimpleDateFormat("dd/MM", Locale.getDefault()).format(Date(entry.createdAtEpochMs)), style = MaterialTheme.typography.labelSmall, color = Color(0xFF475569))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BodyMetricDeltaCard(label: String, current: Float?, previous: Float?, accent: Color, modifier: Modifier = Modifier) {
+    val delta = if (current != null && previous != null) current - previous else null
+    Surface(modifier = modifier, shape = RoundedCornerShape(16.dp), color = accent.copy(alpha = 0.10f)) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 12.dp)) {
+            Text(label, color = Color(0xFF64748B), style = MaterialTheme.typography.labelSmall)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                delta?.let { "${if (it >= 0) "+" else ""}${formatMetric(it)} cm" } ?: "--",
+                color = accent,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+@Composable
+private fun BodyMetricChip(label: String, value: String, modifier: Modifier = Modifier) {
+    Surface(modifier = modifier, shape = RoundedCornerShape(16.dp), color = Color(0xFFF8FAFC)) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Text(label, color = Color(0xFF64748B), style = MaterialTheme.typography.labelSmall)
+            Spacer(Modifier.height(4.dp))
+            Text(value, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+@Composable
+private fun BodyMetricsPhotoPreview(photoPath: String) {
+    val bitmap = remember(photoPath) {
+        runCatching { BitmapFactory.decodeFile(photoPath)?.asImageBitmap() }.getOrNull()
+    }
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap,
+            contentDescription = null,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(180.dp)
+                .clip(RoundedCornerShape(16.dp)),
+            contentScale = ContentScale.Crop
+        )
+    }
+}
+
+@Composable
+private fun EditBodyMetricsDialog(
+    entry: BodyMetricsEntity,
+    onDismiss: () -> Unit,
+    onSave: (BodyMetricsEntity) -> Unit,
+    onDelete: () -> Unit
+) {
+    val context = LocalContext.current
+    var weightText by remember(entry) { mutableStateOf(formatMetric(entry.weightKg)) }
+    var waistText by remember(entry) { mutableStateOf(formatMetric(entry.waistCm)) }
+    var chestText by remember(entry) { mutableStateOf(formatMetric(entry.chestCm)) }
+    var armText by remember(entry) { mutableStateOf(formatMetric(entry.armCm)) }
+    var noteText by remember(entry) { mutableStateOf(entry.note) }
+    var photoPath by remember(entry) { mutableStateOf(entry.photoPath) }
+    val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            saveAvatarFromUri(context, uri)?.let { savedPath ->
+                photoPath = savedPath
+            }
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = Color.White,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text("Editar medicao", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                OutlinedTextField(value = weightText, onValueChange = { weightText = it }, label = { Text("Peso (kg)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(value = waistText, onValueChange = { waistText = it }, label = { Text("Cintura (cm)") }, modifier = Modifier.weight(1f), singleLine = true)
+                    OutlinedTextField(value = chestText, onValueChange = { chestText = it }, label = { Text("Peito (cm)") }, modifier = Modifier.weight(1f), singleLine = true)
+                }
+                OutlinedTextField(value = armText, onValueChange = { armText = it }, label = { Text("Braço (cm)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(value = noteText, onValueChange = { noteText = it }, label = { Text("Observacao") }, modifier = Modifier.fillMaxWidth())
+                OutlinedButton(onClick = { photoLauncher.launch("image/*") }, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (photoPath.isBlank()) "Adicionar foto de progresso" else "Trocar foto de progresso")
+                }
+                if (photoPath.isNotBlank()) {
+                    BodyMetricsPhotoPreview(photoPath = photoPath)
+                }
+                Button(
+                    onClick = {
+                        onSave(
+                            entry.copy(
+                                weightKg = weightText.replace(",", ".").toFloatOrNull() ?: 0f,
+                                waistCm = waistText.replace(",", ".").toFloatOrNull() ?: 0f,
+                                chestCm = chestText.replace(",", ".").toFloatOrNull() ?: 0f,
+                                armCm = armText.replace(",", ".").toFloatOrNull() ?: 0f,
+                                note = noteText.trim(),
+                                photoPath = photoPath
+                            )
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Text("Guardar alteracoes")
+                }
+                OutlinedButton(
+                    onClick = onDelete,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFB91C1C))
+                ) {
+                    Text("Eliminar medicao")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BodyMetricsPremiumScreen(onOpenDrawer: () -> Unit) {
+    val vm: BodyMetricsViewModel = viewModel()
+    val profileVM: ProfileViewModel = viewModel()
+    val context = LocalContext.current
+    val history = vm.history.collectAsState().value
+    val profile = profileVM.profile.collectAsState().value
+    val latest = history.firstOrNull()
+    val previous = history.getOrNull(1)
+    val firstEntry = history.lastOrNull()
+    val chartEntries = history.take(6).reversed()
+
+    var weightText by remember(profile, history) {
+        mutableStateOf(formatMetric(history.firstOrNull()?.weightKg ?: profile?.weightKg ?: 0f))
+    }
+    var waistText by remember(history) { mutableStateOf(formatMetric(history.firstOrNull()?.waistCm ?: 0f)) }
+    var chestText by remember(history) { mutableStateOf(formatMetric(history.firstOrNull()?.chestCm ?: 0f)) }
+    var armText by remember(history) { mutableStateOf(formatMetric(history.firstOrNull()?.armCm ?: 0f)) }
+    var noteText by remember { mutableStateOf("") }
+    var photoPath by remember { mutableStateOf("") }
+    var selectedMetric by remember { mutableStateOf(BodyMetricType.Weight) }
+    var editingEntry by remember { mutableStateOf<BodyMetricsEntity?>(null) }
+
+    val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            saveAvatarFromUri(context, uri)?.let { savedPath ->
+                photoPath = savedPath
+            }
+        }
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        CenterAlignedTopAppBar(
+            title = { Text("Peso e Medidas", fontWeight = FontWeight.SemiBold) },
+            navigationIcon = {
+                IconButton(onClick = onOpenDrawer) {
+                    Icon(Icons.Default.Menu, contentDescription = null)
+                }
+            },
+            actions = { NotificationCenterActionButton() }
+        )
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 14.dp),
+            contentPadding = PaddingValues(top = 12.dp, bottom = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                BodyMetricsPremiumHeroCard(
+                    history = history,
+                    latest = latest,
+                    previous = previous,
+                    firstEntry = firstEntry,
+                    totalCount = history.size
+                )
+            }
+
+            item {
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Tendencia recente", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        Text(
+                            "Leitura rápida das últimas medições corporais.",
+                            color = Color(0xFF64748B),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(BodyMetricType.values().toList()) { metric ->
+                                FilterChip(
+                                    selected = selectedMetric == metric,
+                                    onClick = { selectedMetric = metric },
+                                    label = { Text(metric.label) }
+                                )
+                            }
+                        }
+                        BodyMetricsMetricChart(entries = chartEntries, metric = selectedMetric)
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            BodyMetricDeltaCard("Cintura", latest?.waistCm, previous?.waistCm, Color(0xFF0EA5E9), Modifier.weight(1f))
+                            BodyMetricDeltaCard("Peito", latest?.chestCm, previous?.chestCm, Color(0xFF22C55E), Modifier.weight(1f))
+                            BodyMetricDeltaCard("Braço", latest?.armCm, previous?.armCm, Color(0xFFF59E0B), Modifier.weight(1f))
+                        }
+                        BodyMetricsSummaryRow(latest = latest, firstEntry = firstEntry)
+                    }
+                }
+            }
+
+            item {
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Novo registo corporal", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        Text(
+                            "Guarda peso, medidas e uma foto de progresso para comparar a tua evolucao.",
+                            color = Color(0xFF64748B),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        OutlinedTextField(
+                            value = weightText,
+                            onValueChange = { weightText = it },
+                            label = { Text("Peso (kg)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedTextField(
+                                value = waistText,
+                                onValueChange = { waistText = it },
+                                label = { Text("Cintura (cm)") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true
+                            )
+                            OutlinedTextField(
+                                value = chestText,
+                                onValueChange = { chestText = it },
+                                label = { Text("Peito (cm)") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true
+                            )
+                        }
+                        OutlinedTextField(
+                            value = armText,
+                            onValueChange = { armText = it },
+                            label = { Text("Braço (cm)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = noteText,
+                            onValueChange = { noteText = it },
+                            label = { Text("Observacao (opcional)") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = { photoLauncher.launch("image/*") },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(14.dp)
+                            ) {
+                                Icon(Icons.Default.PhotoCamera, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text(if (photoPath.isBlank()) "Adicionar foto" else "Trocar foto")
+                            }
+                            if (photoPath.isNotBlank()) {
+                                Text("Foto pronta", color = Color(0xFF15803D), style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                        if (photoPath.isNotBlank()) {
+                            BodyMetricsPhotoPreview(photoPath = photoPath)
+                        }
+                        Button(
+                            onClick = {
+                                vm.addEntry(
+                                    weightKg = weightText.replace(",", ".").toFloatOrNull() ?: 0f,
+                                    waistCm = waistText.replace(",", ".").toFloatOrNull() ?: 0f,
+                                    chestCm = chestText.replace(",", ".").toFloatOrNull() ?: 0f,
+                                    armCm = armText.replace(",", ".").toFloatOrNull() ?: 0f,
+                                    note = noteText.trim(),
+                                    photoPath = photoPath
+                                )
+                                weightText = weightText.replace(",", ".").toFloatOrNull()?.let(::formatMetric) ?: weightText
+                                waistText = waistText.replace(",", ".").toFloatOrNull()?.let(::formatMetric) ?: waistText
+                                chestText = chestText.replace(",", ".").toFloatOrNull()?.let(::formatMetric) ?: chestText
+                                armText = armText.replace(",", ".").toFloatOrNull()?.let(::formatMetric) ?: armText
+                                noteText = ""
+                                photoPath = ""
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Text("Guardar medicao")
+                        }
+                    }
+                }
+            }
+
+            item {
+                Text("Histórico corporal", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            }
+
+            if (history.isEmpty()) {
+                item {
+                    BodyMetricsEmptyStateCard()
+                }
+            } else {
+                items(history.take(12)) { entry ->
+                    BodyMetricsHistoryCard(
+                        entry = entry,
+                        latest = latest,
+                        onClick = { editingEntry = entry }
+                    )
+                }
+            }
+        }
+    }
+
+    if (editingEntry != null) {
+        EditBodyMetricsPremiumDialog(
+            entry = editingEntry!!,
+            onDismiss = { editingEntry = null },
+            onSave = {
+                vm.updateEntry(it)
+                editingEntry = null
+            },
+            onDelete = {
+                vm.deleteEntry(editingEntry!!.id)
+                editingEntry = null
+            }
+        )
+    }
+}
+
+@Composable
+private fun BodyMetricsPremiumHeroCard(
+    history: List<BodyMetricsEntity>,
+    latest: BodyMetricsEntity?,
+    previous: BodyMetricsEntity?,
+    firstEntry: BodyMetricsEntity?,
+    totalCount: Int
+) {
+    val totalWeightDelta = if (latest != null && firstEntry != null && totalCount > 1) latest.weightKg - firstEntry.weightKg else null
+    Card(
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 10.dp)
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(54.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Color.White.copy(alpha = 0.10f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.MonitorWeight, contentDescription = null, tint = Color(0xFFF59E0B), modifier = Modifier.size(28.dp))
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Evolucao corporal", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                    Text(
+                        "Acompanha peso, cintura, peito e braço num histórico visual mais claro.",
+                        color = Color.White.copy(alpha = 0.72f),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                MetricsHeroStat("Peso atual", latest?.weightKg?.let { "${formatMetric(it)} kg" } ?: "--", Modifier.weight(1f))
+                MetricsHeroStat("Registos", totalCount.toString(), Modifier.weight(1f))
+                MetricsHeroStat("Tendencia", metricsTrendLabel(latest, previous), Modifier.weight(1f))
+            }
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = Color.White.copy(alpha = 0.08f)
+            ) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("Resumo rapido", color = Color.White.copy(alpha = 0.70f), style = MaterialTheme.typography.labelMedium)
+                    Spacer(Modifier.height(6.dp))
+                    Text(bodyMetricsInsightText(history), color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                    if (totalWeightDelta != null) {
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            "Variacao total: ${if (totalWeightDelta >= 0f) "+" else ""}${formatMetric(totalWeightDelta)} kg",
+                            color = Color(0xFFFCD34D),
+                            fontWeight = FontWeight.SemiBold,
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BodyMetricsSummaryRow(latest: BodyMetricsEntity?, firstEntry: BodyMetricsEntity?) {
+    val totalDelta = if (latest != null && firstEntry != null) latest.weightKg - firstEntry.weightKg else null
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        CalendarStatCard(
+            label = "Peso inicial",
+            value = firstEntry?.let { "${formatMetric(it.weightKg)} kg" } ?: "--",
+            color = Color(0xFF4F46E5),
+            modifier = Modifier.weight(1f)
+        )
+        CalendarStatCard(
+            label = "Variacao",
+            value = totalDelta?.let { "${if (it >= 0f) "+" else ""}${formatMetric(it)} kg" } ?: "--",
+            color = if ((totalDelta ?: 0f) <= 0f) Color(0xFF16A34A) else Color(0xFFF59E0B),
+            modifier = Modifier.weight(1f)
+        )
+        CalendarStatCard(
+            label = "Seguimento",
+            value = bodyMetricsTrackingLabel(latest, firstEntry),
+            color = Color(0xFF0EA5E9),
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable
+private fun BodyMetricsHistoryCard(
+    entry: BodyMetricsEntity,
+    latest: BodyMetricsEntity?,
+    onClick: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        modifier = Modifier.clickable(onClick = onClick)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(formatMetricsDate(entry.createdAtEpochMs), fontWeight = FontWeight.Bold)
+                    Text(
+                        bodyMetricsEntrySubtitle(entry, latest),
+                        color = Color(0xFF64748B),
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+                Text("${formatMetric(entry.weightKg)} kg", color = Color(0xFF4F46E5), fontWeight = FontWeight.Bold)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                BodyMetricChip("Cintura", "${formatMetric(entry.waistCm)} cm", Modifier.weight(1f))
+                BodyMetricChip("Peito", "${formatMetric(entry.chestCm)} cm", Modifier.weight(1f))
+                BodyMetricChip("Braço", "${formatMetric(entry.armCm)} cm", Modifier.weight(1f))
+            }
+            if (entry.note.isNotBlank()) {
+                Text(entry.note, color = Color(0xFF475569), style = MaterialTheme.typography.bodySmall)
+            }
+            if (entry.photoPath.isNotBlank()) {
+                BodyMetricsPhotoPreview(photoPath = entry.photoPath)
+            }
+        }
+    }
+}
+
+@Composable
+private fun BodyMetricsEmptyStateCard() {
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = Color.White
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 22.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color(0xFFF8FAFC)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.MonitorWeight, contentDescription = null, tint = Color(0xFF4F46E5))
+            }
+            Text("Ainda nao tens registos", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Text(
+                "Adiciona a tua primeira medicao para comecar a acompanhar a evolucao corporal.",
+                color = Color(0xFF64748B),
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+@Composable
+private fun EditBodyMetricsPremiumDialog(
+    entry: BodyMetricsEntity,
+    onDismiss: () -> Unit,
+    onSave: (BodyMetricsEntity) -> Unit,
+    onDelete: () -> Unit
+) {
+    val context = LocalContext.current
+    var weightText by remember(entry) { mutableStateOf(formatMetric(entry.weightKg)) }
+    var waistText by remember(entry) { mutableStateOf(formatMetric(entry.waistCm)) }
+    var chestText by remember(entry) { mutableStateOf(formatMetric(entry.chestCm)) }
+    var armText by remember(entry) { mutableStateOf(formatMetric(entry.armCm)) }
+    var noteText by remember(entry) { mutableStateOf(entry.note) }
+    var photoPath by remember(entry) { mutableStateOf(entry.photoPath) }
+    val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            saveAvatarFromUri(context, uri)?.let { savedPath ->
+                photoPath = savedPath
+            }
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = Color.White,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text("Editar medicao", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                OutlinedTextField(value = weightText, onValueChange = { weightText = it }, label = { Text("Peso (kg)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(value = waistText, onValueChange = { waistText = it }, label = { Text("Cintura (cm)") }, modifier = Modifier.weight(1f), singleLine = true)
+                    OutlinedTextField(value = chestText, onValueChange = { chestText = it }, label = { Text("Peito (cm)") }, modifier = Modifier.weight(1f), singleLine = true)
+                }
+                OutlinedTextField(value = armText, onValueChange = { armText = it }, label = { Text("Braço (cm)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(value = noteText, onValueChange = { noteText = it }, label = { Text("Observacao") }, modifier = Modifier.fillMaxWidth())
+                OutlinedButton(onClick = { photoLauncher.launch("image/*") }, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (photoPath.isBlank()) "Adicionar foto de progresso" else "Trocar foto de progresso")
+                }
+                if (photoPath.isNotBlank()) {
+                    BodyMetricsPhotoPreview(photoPath = photoPath)
+                    TextButton(onClick = { photoPath = "" }, modifier = Modifier.align(Alignment.End)) {
+                        Text("Remover foto")
+                    }
+                }
+                Button(
+                    onClick = {
+                        onSave(
+                            entry.copy(
+                                weightKg = weightText.replace(",", ".").toFloatOrNull() ?: 0f,
+                                waistCm = waistText.replace(",", ".").toFloatOrNull() ?: 0f,
+                                chestCm = chestText.replace(",", ".").toFloatOrNull() ?: 0f,
+                                armCm = armText.replace(",", ".").toFloatOrNull() ?: 0f,
+                                note = noteText.trim(),
+                                photoPath = photoPath
+                            )
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Text("Guardar alteracoes")
+                }
+                OutlinedButton(
+                    onClick = onDelete,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFB91C1C))
+                ) {
+                    Text("Eliminar medicao")
+                }
+            }
+        }
+    }
+}
+
+private fun bodyMetricsTrackingLabel(latest: BodyMetricsEntity?, firstEntry: BodyMetricsEntity?): String {
+    if (latest == null || firstEntry == null) return "--"
+    val days = ((latest.createdAtEpochMs - firstEntry.createdAtEpochMs) / (24L * 60L * 60L * 1000L)).coerceAtLeast(0L)
+    return when {
+        days == 0L -> "Hoje"
+        days < 7L -> "${days + 1} dias"
+        else -> "${(days / 7L) + 1} sem"
+    }
+}
+
+private fun bodyMetricsInsightText(history: List<BodyMetricsEntity>): String {
+    val latest = history.firstOrNull() ?: return "Regista o teu primeiro peso para desbloquear a leitura da tua evolucao."
+    val first = history.lastOrNull() ?: latest
+    if (history.size == 1) {
+        return "Primeiro registo guardado. Continua a medir nas proximas semanas para ver a tendencia real."
+    }
+    val delta = latest.weightKg - first.weightKg
+    return when {
+        delta <= -1f -> "Boa consistencia. O peso baixou ${formatMetric(kotlin.math.abs(delta))} kg desde o primeiro registo."
+        delta >= 1f -> "O peso subiu ${formatMetric(delta)} kg desde o primeiro registo. Usa cintura e peito para perceber a qualidade dessa evolucao."
+        else -> "O peso está estável. Compara agora cintura, peito e braço para ler melhor o teu progresso."
+    }
+}
+
+private fun bodyMetricsEntrySubtitle(entry: BodyMetricsEntity, latest: BodyMetricsEntity?): String {
+    if (latest == null || latest.id == entry.id) return "Registo mais recente"
+    val delta = entry.weightKg - latest.weightKg
+    return if (delta == 0f) {
+        "Mesmo peso do registo atual"
+    } else {
+        "${if (delta > 0f) "+" else ""}${formatMetric(delta)} kg vs. atual"
+    }
+}
+
+@Composable
+private fun CalendarTimelineSection(
+    title: String,
+    emptyText: String,
+    items: List<String>,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    accent: Color
+) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = accent.copy(alpha = 0.08f)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(title, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+            }
+            if (items.isEmpty()) {
+                Text(emptyText, color = Color(0xFF64748B), style = MaterialTheme.typography.bodySmall)
+            } else {
+                items.forEach { item ->
+                    Row(verticalAlignment = Alignment.Top) {
+                        Box(
+                            modifier = Modifier
+                                .padding(top = 4.dp)
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(accent)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(item, modifier = Modifier.weight(1f), color = Color(0xFF334155), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExerciseLibraryScreen(onOpenDrawer: () -> Unit) {
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    var selectedCategory by remember { mutableStateOf(ExerciseLibraryCategory.All) }
+    var selectedExercise by remember { mutableStateOf<ExerciseLibraryItem?>(null) }
+    val exercises = remember { exerciseLibraryItems() }
+    val filteredExercises = remember(selectedCategory, exercises) {
+        exercises.filter { selectedCategory == ExerciseLibraryCategory.All || it.category == selectedCategory }
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        TopAppBar(
+            title = { Text("Biblioteca de Exercícios", fontWeight = FontWeight.Bold) },
+            navigationIcon = { IconButton(onClick = onOpenDrawer) { Icon(Icons.Default.Menu, contentDescription = null) } },
+            actions = { NotificationCenterActionButton() }
+        )
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 14.dp),
+            contentPadding = PaddingValues(top = 12.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(22.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 10.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(52.dp)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(Color.White.copy(alpha = 0.12f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Default.VideoLibrary,
+                                    contentDescription = null,
+                                    tint = Color(0xFFF59E0B),
+                                    modifier = Modifier.size(28.dp)
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Aprende a executar melhor", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    "Escolhe uma categoria, abre o exercício e segue instruções claras com apoio visual em vídeo.",
+                                    color = Color.White.copy(alpha = 0.76f),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            ExerciseLibraryHeaderStat("Categorias", (ExerciseLibraryCategory.values().size - 1).toString(), Modifier.weight(1f))
+                            ExerciseLibraryHeaderStat("Exercícios", exercises.size.toString(), Modifier.weight(1f))
+                            ExerciseLibraryHeaderStat("Com vídeo", "100%", Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+
+            item {
+                Card(
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text("Categorias", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                        Text(
+                            "Filtra por grupo muscular ou tipo de trabalho para encontrar mais rápido o que queres aprender hoje.",
+                            color = Color(0xFF64748B),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(ExerciseLibraryCategory.values().toList()) { category ->
+                                FilterChip(
+                                    selected = selectedCategory == category,
+                                    onClick = { selectedCategory = category },
+                                    label = { Text(repairPtText(category.label)) },
+                                    leadingIcon = {
+                                        Icon(
+                                            category.icon,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        if (selectedCategory == ExerciseLibraryCategory.All) "Todos os exercícios" else selectedCategory.label,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        "${filteredExercises.size} opções",
+                        color = Color(0xFF64748B),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+
+            items(filteredExercises) { exercise ->
+                ExerciseLibraryCard(
+                    item = exercise,
+                    onOpen = { selectedExercise = exercise },
+                    onOpenVideo = { uriHandler.openUri(exercise.videoUrl) }
+                )
+            }
+        }
+    }
+
+    if (selectedExercise != null) {
+        ExerciseLibraryDetailsDialog(
+            item = selectedExercise!!,
+            onDismiss = { selectedExercise = null },
+            onOpenVideo = { uriHandler.openUri(selectedExercise!!.videoUrl) }
+        )
+    }
+}
+
+@Composable
+private fun ExerciseLibraryHeaderStat(label: String, value: String, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        color = Color.White.copy(alpha = 0.08f)
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 12.dp)) {
+            Text(label, color = Color.White.copy(alpha = 0.68f), style = MaterialTheme.typography.labelSmall)
+            Spacer(Modifier.height(4.dp))
+            Text(value, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        }
+    }
+}
+
+@Composable
+private fun ExerciseLibraryCard(
+    item: ExerciseLibraryItem,
+    onOpen: () -> Unit,
+    onOpenVideo: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 7.dp),
+        modifier = Modifier.clickable { onOpen() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(item.category.accent.copy(alpha = 0.14f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        item.category.icon,
+                        contentDescription = null,
+                        tint = item.category.accent,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(item.name, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    Spacer(Modifier.height(3.dp))
+                    Text(item.focus, color = Color(0xFF64748B), style = MaterialTheme.typography.bodySmall)
+                }
+                FilledTonalButton(
+                    onClick = onOpenVideo,
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Vídeo")
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ExerciseTag(item.level, item.category.accent)
+                ExerciseTag(repairPtText(item.equipment), Color(0xFF0F172A))
+                ExerciseTag(item.category.label, Color(0xFF475569))
+            }
+
+            Text(
+                item.summary,
+                color = Color(0xFF334155),
+                style = MaterialTheme.typography.bodyMedium
+            )
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                item.steps.take(3).forEachIndexed { index, step ->
+                    Row(verticalAlignment = Alignment.Top) {
+                        Box(
+                            modifier = Modifier
+                                .padding(top = 2.dp)
+                                .size(22.dp)
+                                .clip(CircleShape)
+                                .background(item.category.accent.copy(alpha = 0.14f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "${index + 1}",
+                                color = item.category.accent,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            step,
+                            modifier = Modifier.weight(1f),
+                            color = Color(0xFF475569),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
+
+            Text(
+                "Toque no card para ver instruções completas, dicas e erros a evitar.",
+                color = Color(0xFF64748B),
+                style = MaterialTheme.typography.labelSmall
+            )
+        }
+    }
+}
+
+@Composable
+private fun ExerciseTag(label: String, accent: Color) {
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = accent.copy(alpha = 0.12f)
+    ) {
+        Text(
+            label,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            color = accent,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+@Composable
+private fun ExerciseLibraryDetailsDialog(
+    item: ExerciseLibraryItem,
+    onDismiss: () -> Unit,
+    onOpenVideo: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(28.dp),
+            color = Color.White,
+            tonalElevation = 8.dp,
+            shadowElevation = 18.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 720.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(22.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(60.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(item.category.accent.copy(alpha = 0.14f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(item.category.icon, contentDescription = null, tint = item.category.accent, modifier = Modifier.size(30.dp))
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(repairPtText(item.name), fontWeight = FontWeight.Bold, fontSize = 22.sp)
+                        Spacer(Modifier.height(4.dp))
+                        Text(repairPtText(item.focus), color = Color(0xFF64748B), style = MaterialTheme.typography.bodySmall)
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Fechar")
+                    }
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ExerciseTag(repairPtText(item.level), item.category.accent)
+                    ExerciseTag(repairPtText(item.equipment), Color(0xFF0F172A))
+                    ExerciseTag(repairPtText(item.category.label), Color(0xFF475569))
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xFFF8FAFC)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("Como executar", fontWeight = FontWeight.Bold)
+                        Text(repairPtText(item.summary), color = Color(0xFF475569), style = MaterialTheme.typography.bodySmall)
+                        item.steps.forEachIndexed { index, step ->
+                            Row(verticalAlignment = Alignment.Top) {
+                                Box(
+                                    modifier = Modifier
+                                        .padding(top = 2.dp)
+                                        .size(24.dp)
+                                        .clip(CircleShape)
+                                        .background(item.category.accent.copy(alpha = 0.14f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        "${index + 1}",
+                                        color = item.category.accent,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                Text(repairPtText(step), modifier = Modifier.weight(1f), color = Color(0xFF334155))
+                            }
+                        }
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = item.category.accent.copy(alpha = 0.08f)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text("Dicas de execução", fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                        item.tips.forEach { tip ->
+                            Row(verticalAlignment = Alignment.Top) {
+                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = item.category.accent, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(tip, modifier = Modifier.weight(1f), color = Color(0xFF475569), style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xFFFFF7ED)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text("Erros a evitar", fontWeight = FontWeight.Bold, color = Color(0xFF9A3412))
+                        item.commonMistakes.forEach { mistake ->
+                            Row(verticalAlignment = Alignment.Top) {
+                                Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFEA580C), modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(mistake, modifier = Modifier.weight(1f), color = Color(0xFF7C2D12), style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+
+                Button(
+                    onClick = onOpenVideo,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Icon(Icons.Default.PlayCircleFilled, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Abrir vídeo demonstrativo")
+                }
+
+                OutlinedButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Text("Fechar")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EnhancedExerciseLibraryScreen(onOpenDrawer: () -> Unit) {
+    val context = LocalContext.current
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    var selectedCategory by remember { mutableStateOf(ExerciseLibraryCategory.All) }
+    var selectedLevel by remember { mutableStateOf("Todos") }
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedExercise by remember { mutableStateOf<ExerciseLibraryItem?>(null) }
+    val exercises = remember { exerciseLibraryItems() }
+    var favoriteIds by remember { mutableStateOf(loadExerciseFavorites(context)) }
+    val favoriteExercises = remember(exercises, favoriteIds) {
+        exercises.filter { it.id in favoriteIds }
+    }
+    val filteredExercises = remember(selectedCategory, selectedLevel, searchQuery, exercises) {
+        exercises.filter { item ->
+            val matchesCategory = selectedCategory == ExerciseLibraryCategory.All || item.category == selectedCategory
+            val matchesLevel = selectedLevel == "Todos" || item.level == selectedLevel
+            val normalizedQuery = searchQuery.trim()
+            val matchesSearch = normalizedQuery.isBlank() ||
+                repairPtText(item.name).contains(normalizedQuery, ignoreCase = true) ||
+                repairPtText(item.focus).contains(normalizedQuery, ignoreCase = true) ||
+                repairPtText(item.category.label).contains(normalizedQuery, ignoreCase = true)
+            matchesCategory && matchesLevel && matchesSearch
+        }
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        TopAppBar(
+            title = { Text("Biblioteca de Exercícios", fontWeight = FontWeight.Bold) },
+            navigationIcon = { IconButton(onClick = onOpenDrawer) { Icon(Icons.Default.Menu, contentDescription = null) } },
+            actions = { NotificationCenterActionButton() }
+        )
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 14.dp),
+            contentPadding = PaddingValues(top = 12.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(22.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 10.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(52.dp)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(Color.White.copy(alpha = 0.12f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = Color(0xFFF59E0B), modifier = Modifier.size(28.dp))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Aprende a executar melhor", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    "Pesquisa, filtra por nível e guarda favoritos para criares uma biblioteca pessoal de exercícios.",
+                                    color = Color.White.copy(alpha = 0.76f),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            ExerciseLibraryHeaderStat("Categorias", (ExerciseLibraryCategory.values().size - 1).toString(), Modifier.weight(1f))
+                            ExerciseLibraryHeaderStat("Exercícios", exercises.size.toString(), Modifier.weight(1f))
+                            ExerciseLibraryHeaderStat("Favoritos", favoriteExercises.size.toString(), Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+
+            item {
+                Card(
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text("Explorar biblioteca", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                        Text(
+                            "Encontra por nome, grupo muscular ou dificuldade e abre instruções claras com vídeo.",
+                            color = Color(0xFF64748B),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("Pesquisar exercício") },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            trailingIcon = {
+                                if (searchQuery.isNotBlank()) {
+                                    IconButton(onClick = { searchQuery = "" }) {
+                                        Icon(Icons.Default.Close, contentDescription = "Limpar pesquisa")
+                                    }
+                                }
+                            },
+                            shape = RoundedCornerShape(14.dp)
+                        )
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(ExerciseLibraryCategory.values().toList()) { category ->
+                                FilterChip(
+                                    selected = selectedCategory == category,
+                                    onClick = { selectedCategory = category },
+                                    label = { Text(repairPtText(category.label)) },
+                                    leadingIcon = {
+                                        Icon(category.icon, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    }
+                                )
+                            }
+                        }
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(exerciseLibraryLevels()) { level ->
+                                FilterChip(
+                                    selected = selectedLevel == level,
+                                    onClick = { selectedLevel = level },
+                                    label = { Text(repairPtText(level)) }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (favoriteExercises.isNotEmpty()) {
+                item {
+                    Card(
+                        shape = RoundedCornerShape(18.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFBEB)),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Favorite, contentDescription = null, tint = Color(0xFFE11D48))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Os teus favoritos", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                Text("${favoriteExercises.size}", color = Color(0xFF92400E), style = MaterialTheme.typography.labelSmall)
+                            }
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                items(favoriteExercises.take(6)) { exercise ->
+                                    Surface(
+                                        shape = RoundedCornerShape(16.dp),
+                                        color = Color.White,
+                                        modifier = Modifier.clickable { selectedExercise = exercise }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(exercise.category.icon, contentDescription = null, tint = exercise.category.accent, modifier = Modifier.size(18.dp))
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(repairPtText(exercise.name), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        if (selectedCategory == ExerciseLibraryCategory.All) "Todos os exercícios" else repairPtText(selectedCategory.label),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text("${filteredExercises.size} opcoes", color = Color(0xFF64748B), style = MaterialTheme.typography.bodySmall)
+                }
+            }
+
+            items(filteredExercises) { exercise ->
+                EnhancedExerciseLibraryCard(
+                    item = exercise,
+                    isFavorite = exercise.id in favoriteIds,
+                    onOpen = { selectedExercise = exercise },
+                    onOpenVideo = { uriHandler.openUri(exercise.videoUrl) },
+                    onToggleFavorite = {
+                        favoriteIds = toggleExerciseFavorite(context, favoriteIds, exercise.id)
+                    }
+                )
+            }
+        }
+    }
+
+    if (selectedExercise != null) {
+        ExerciseLibraryDetailsDialog(
+            item = selectedExercise!!,
+            onDismiss = { selectedExercise = null },
+            onOpenVideo = { uriHandler.openUri(selectedExercise!!.videoUrl) }
+        )
+    }
+}
+
+@Composable
+private fun EnhancedExerciseLibraryCard(
+    item: ExerciseLibraryItem,
+    isFavorite: Boolean,
+    onOpen: () -> Unit,
+    onOpenVideo: () -> Unit,
+    onToggleFavorite: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 7.dp),
+        modifier = Modifier.clickable { onOpen() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(item.category.accent.copy(alpha = 0.14f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(item.category.icon, contentDescription = null, tint = item.category.accent, modifier = Modifier.size(26.dp))
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(repairPtText(item.name), fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    Spacer(Modifier.height(3.dp))
+                    Text(repairPtText(item.focus), color = Color(0xFF64748B), style = MaterialTheme.typography.bodySmall)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    IconButton(onClick = onToggleFavorite) {
+                        Icon(
+                            if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                            contentDescription = "Favoritar exercício",
+                            tint = if (isFavorite) Color(0xFFE11D48) else Color(0xFF94A3B8)
+                        )
+                    }
+                    FilledTonalButton(
+                        onClick = onOpenVideo,
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Vídeo")
+                    }
+                }
+            }
+
+            ExerciseLibraryPreviewBanner(item = item)
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ExerciseTag(repairPtText(item.level), item.category.accent)
+                ExerciseTag(repairPtText(item.equipment), Color(0xFF0F172A))
+                ExerciseTag(repairPtText(item.category.label), Color(0xFF475569))
+            }
+
+            Text(repairPtText(item.summary), color = Color(0xFF334155), style = MaterialTheme.typography.bodyMedium)
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                item.steps.take(3).forEachIndexed { index, step ->
+                    Row(verticalAlignment = Alignment.Top) {
+                        Box(
+                            modifier = Modifier
+                                .padding(top = 2.dp)
+                                .size(22.dp)
+                                .clip(CircleShape)
+                                .background(item.category.accent.copy(alpha = 0.14f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("${index + 1}", color = item.category.accent, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Text(repairPtText(step), modifier = Modifier.weight(1f), color = Color(0xFF475569), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+
+            Text(
+                "Toque no card para ver instruções completas, dicas e erros a evitar.",
+                color = Color(0xFF64748B),
+                style = MaterialTheme.typography.labelSmall
+            )
+        }
+    }
+}
+
+@Composable
+private fun ExerciseLibraryPreviewBanner(item: ExerciseLibraryItem) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(94.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(
+                        item.category.accent.copy(alpha = 0.95f),
+                        item.category.accent.copy(alpha = 0.55f),
+                        Color.White
+                    )
+                )
+            )
+    ) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text("Foco principal", color = Color.White.copy(alpha = 0.86f), style = MaterialTheme.typography.labelSmall)
+            Text(repairPtText(item.focus), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text("Execução guiada com vídeo de apoio", color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.bodySmall)
+        }
+        Icon(
+            item.category.icon,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.22f),
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 16.dp)
+                .size(54.dp)
+        )
+    }
+}
+
 /* -------------------- TREINOS -------------------- */
 
 @Composable
-private fun TrainingScreen(onOpenDrawer: () -> Unit) {
+private fun TrainingScreen(onOpenDrawer: () -> Unit, onOpenLibrary: () -> Unit) {
     val vm: TrainingViewModel = viewModel()
     val profileVM: ProfileViewModel = viewModel()
     val workouts = vm.workouts.collectAsState().value
@@ -2539,12 +5563,15 @@ private fun TrainingScreen(onOpenDrawer: () -> Unit) {
     val profile = profileVM.profile.collectAsState().value
 
     val today = remember { Calendar.getInstance() }
-    val trainingGoal = profile?.goal ?: "Manter Fisico"
+    val trainingGoal = profile?.goal ?: "Manter Físico"
     val planRotation = remember { currentPlanRotationInfo() }
-    val weeklyPlan = remember(trainingGoal, planRotation.planIndex) {
+    val baseWeeklyPlan = remember(trainingGoal, planRotation.planIndex) {
         buildGoalBasedWorkoutPlan(trainingGoal, planRotation.planIndex)
     }
-    val weekGoal = weeklyPlan.count { !it.isRestDay }
+    val weeklyPlan = remember(baseWeeklyPlan, workouts) {
+        buildSmartWeeklyWorkoutPlan(baseWeeklyPlan, workouts, today)
+    }
+    val weekGoal = baseWeeklyPlan.count { !it.isRestDay }
     val weekDone = workoutsDoneThisWeek(workouts)
     val todayPlan = weeklyPlan.firstOrNull { it.dayOfWeek == today.get(Calendar.DAY_OF_WEEK) }
     val didWorkoutToday = hasWorkoutOnDate(workouts, today)
@@ -2560,9 +5587,9 @@ private fun TrainingScreen(onOpenDrawer: () -> Unit) {
         else -> null
     }
     val highlightLabel = when {
-        todayPlan != null && todayPlan.isRestDay -> "Hoje e recuperacao"
+        todayPlan != null && todayPlan.isRestDay -> "Hoje é recuperação"
         todayPlan != null && !didWorkoutToday -> "Treino de hoje"
-        else -> "Proximo treino"
+        else -> "Próximo treino"
     }
     val highlightWorkoutName = when {
         todayPlan != null && todayPlan.isRestDay -> "Descanso ativo"
@@ -2577,16 +5604,30 @@ private fun TrainingScreen(onOpenDrawer: () -> Unit) {
     }
     val highlightSupportingText = when {
         todayPlan != null && todayPlan.isRestDay ->
-            "Hoje o plano pede recuperacao. Proximo: ${upcomingWorkout?.dayLabel ?: "-"} - ${upcomingWorkout?.workoutTitle ?: "A definir"}"
+            "Hoje o plano pede recuperação. Próximo: ${upcomingWorkout?.dayLabel ?: "-"} - ${upcomingWorkout?.workoutTitle ?: "A definir"}"
         todayPlan != null && !didWorkoutToday ->
             "Depois: ${upcomingWorkout?.dayLabel ?: "-"} - ${upcomingWorkout?.workoutTitle ?: "A definir"}"
         primaryWorkout != null ->
             "Planeado para ${primaryWorkout.dayLabel.lowercase(Locale.getDefault())} - ${primaryWorkout.durationText}"
-        else -> "Atualize o plano para ver os proximos treinos."
+        else -> "Atualiza o plano para ver os próximos treinos."
+    }
+
+    val smartHighlightLabel = if (primaryWorkout?.isAutoRescheduled == true) "Treino reajustado" else highlightLabel
+    val smartHighlightSupportingText = if (primaryWorkout?.isAutoRescheduled == true) {
+        "Este treino vinha de ${primaryWorkout.rescheduledFromDayLabel ?: "-"} e foi movido para ${primaryWorkout.dayLabel.lowercase(Locale.getDefault())} para manter a consistência da semana."
+    } else {
+        highlightSupportingText
     }
 
     var selectedWorkoutDay by remember { mutableStateOf<WorkoutPlanEntry?>(null) }
     var editingWorkout by remember { mutableStateOf<WorkoutEntity?>(null) }
+    val missedCount = remember(baseWeeklyPlan, workouts) {
+        baseWeeklyPlan.count { entry ->
+            !entry.isRestDay &&
+                !hasWorkoutOnDate(workouts, calendarForCurrentWeekDay(entry.dayOfWeek)) &&
+                isPastPlannedWorkout(calendarForCurrentWeekDay(entry.dayOfWeek))
+        }
+    }
 
     val alphaAnim = remember { Animatable(0f) }
     LaunchedEffect(Unit) { alphaAnim.animateTo(1f, tween(1000)) }
@@ -2596,7 +5637,7 @@ private fun TrainingScreen(onOpenDrawer: () -> Unit) {
         CenterAlignedTopAppBar(
             title = { Text("Treinos", fontWeight = FontWeight.SemiBold) },
             navigationIcon = { IconButton(onClick = onOpenDrawer) { Icon(Icons.Default.Menu, contentDescription = null) } },
-            actions = { IconButton(onClick = {}) { Icon(Icons.Default.Notifications, contentDescription = null) } }
+            actions = { NotificationCenterActionButton() }
         )
 
         LazyColumn(
@@ -2632,9 +5673,51 @@ private fun TrainingScreen(onOpenDrawer: () -> Unit) {
                         Column(Modifier.weight(1f)) {
                             Text("Sugestão da IA", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                             Text(
-                                aiSuggestion ?: "A analisar o seu perfil...",
+                                aiSuggestion ?: "A analisar o teu perfil...",
                                 style = MaterialTheme.typography.bodyMedium
                             )
+                        }
+                    }
+                }
+            }
+
+            item {
+                Card(
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Color.White.copy(alpha = 0.12f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.VideoLibrary,
+                                contentDescription = null,
+                                tint = Color(0xFFF59E0B)
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Biblioteca de exercícios", color = Color.White, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "Explora categorias, aprende a execução e abre vídeos guiados para cada exercício.",
+                                color = Color.White.copy(alpha = 0.74f),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        TextButton(onClick = onOpenLibrary) {
+                            Text("Abrir", color = Color.White, fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
@@ -2708,9 +5791,9 @@ private fun TrainingScreen(onOpenDrawer: () -> Unit) {
                         }
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(highlightLabel, fontWeight = FontWeight.SemiBold)
+                            Text(smartHighlightLabel, fontWeight = FontWeight.SemiBold)
                             Text(highlightWorkoutName, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                            Text(highlightSupportingText, style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
+                            Text(smartHighlightSupportingText, style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
                         }
                         Text(highlightWhen, fontWeight = FontWeight.Bold)
                     }
@@ -2718,6 +5801,42 @@ private fun TrainingScreen(onOpenDrawer: () -> Unit) {
             }
 
             item { Text("Plano da Semana", fontWeight = FontWeight.Bold, fontSize = 16.sp) }
+
+            if (missedCount > 0) {
+                item {
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFEFF6FF)),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFFDBEAFE)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.AutoFixHigh, contentDescription = null, tint = Color(0xFF2563EB))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Planeamento inteligente ativo", fontWeight = FontWeight.SemiBold, color = Color(0xFF1D4ED8))
+                                Text(
+                                    "Reorganizámos $missedCount treino(s) em falta para os próximos dias livres da semana.",
+                                    color = Color(0xFF475569),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+                }
+            }
 
             item {
                 Card(
@@ -2729,7 +5848,7 @@ private fun TrainingScreen(onOpenDrawer: () -> Unit) {
                         Text("Ciclo do plano: mensal", fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "Faltam ${planRotation.daysRemaining} dias para o proximo bloco. Troca em ${planRotation.nextChangeLabel}.",
+                                "Faltam ${planRotation.daysRemaining} dias para o próximo bloco. A troca acontece em ${planRotation.nextChangeLabel}.",
                             color = Color(0xFF64748B),
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -2741,12 +5860,13 @@ private fun TrainingScreen(onOpenDrawer: () -> Unit) {
                 val plannedDate = remember(p.dayOfWeek) { calendarForCurrentWeekDay(p.dayOfWeek) }
                 val isCompleted = hasWorkoutOnDate(workouts, plannedDate)
                 val isTodayPlan = p.dayOfWeek == today.get(Calendar.DAY_OF_WEEK)
-                val isPastPending = !isCompleted && isPastPlannedWorkout(plannedDate)
+                val isPastPending = !isCompleted && isPastPlannedWorkout(plannedDate) && !p.isAutoRescheduled
                 Card(
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = when {
                             isCompleted -> Color(0xFFF0FDF4)
+                            p.isAutoRescheduled -> Color(0xFFF0F9FF)
                             isPastPending -> Color(0xFFFFFBEB)
                             else -> Color.White
                         }
@@ -2769,6 +5889,7 @@ private fun TrainingScreen(onOpenDrawer: () -> Unit) {
                                 .background(
                                     when {
                                         isCompleted -> Color(0xFFDCFCE7)
+                                        p.isAutoRescheduled -> Color(0xFFE0F2FE)
                                         isPastPending -> Color(0xFFFEF3C7)
                                         else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
                                     }
@@ -2778,12 +5899,14 @@ private fun TrainingScreen(onOpenDrawer: () -> Unit) {
                             Icon(
                                 when {
                                     isCompleted -> Icons.Default.EmojiEvents
+                                    p.isAutoRescheduled -> Icons.Default.AutoAwesome
                                     isPastPending -> Icons.Default.Warning
                                     else -> mediaInfo.icon
                                 },
                                 contentDescription = null,
                                 tint = when {
                                     isCompleted -> Color(0xFF16A34A)
+                                    p.isAutoRescheduled -> Color(0xFF0284C7)
                                     isPastPending -> Color(0xFFD97706)
                                     else -> MaterialTheme.colorScheme.primary
                                 }
@@ -2797,6 +5920,7 @@ private fun TrainingScreen(onOpenDrawer: () -> Unit) {
                                     shape = RoundedCornerShape(999.dp),
                                     color = when {
                                         isCompleted -> Color(0xFFDCFCE7)
+                                        p.isAutoRescheduled -> Color(0xFFE0F2FE)
                                         isPastPending -> Color(0xFFFEF3C7)
                                         p.isRestDay -> Color(0xFFE2E8F0)
                                         else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
@@ -2805,13 +5929,15 @@ private fun TrainingScreen(onOpenDrawer: () -> Unit) {
                                     Text(
                                         when {
                                             isCompleted -> "Treino feito"
+                                            p.isAutoRescheduled -> "Reagendado de ${p.rescheduledFromDayLabel ?: "-"}"
                                             isPastPending -> "Pendente"
-                                            p.isRestDay -> "Recuperacao"
-                                            else -> "Video"
+                                            p.isRestDay -> "Recuperação"
+                                            else -> "Vídeo"
                                         },
                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                                         color = when {
                                             isCompleted -> Color(0xFF15803D)
+                                            p.isAutoRescheduled -> Color(0xFF0369A1)
                                             isPastPending -> Color(0xFFB45309)
                                             p.isRestDay -> Color(0xFF475569)
                                             else -> MaterialTheme.colorScheme.primary
@@ -2823,7 +5949,7 @@ private fun TrainingScreen(onOpenDrawer: () -> Unit) {
                             }
                             Spacer(Modifier.height(4.dp))
                             Text(
-                                if (p.isRestDay) "${p.durationText} • toque para ver mobilidade" else "${p.durationText} • toque para ver exercicios e video",
+                                if (p.isRestDay) "${p.durationText} • toque para ver mobilidade" else "${p.durationText} • toque para ver exercícios e vídeo",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color(0xFF64748B)
                             )
@@ -2845,7 +5971,7 @@ private fun TrainingScreen(onOpenDrawer: () -> Unit) {
                                             durationMin = durationMinutesFromPlan(p.durationText),
                                             kcal = estimatedWorkoutCalories(p, trainingGoal),
                                             createdAtEpochMs = completionEpochForPlannedDate(plannedDate),
-                                            dateTime = "Concluido ${p.dayLabel} • ${getCurrentTimeText()}"
+                                            dateTime = "Concluído ${p.dayLabel} • ${getCurrentTimeText()}"
                                         )
                                     },
                                     modifier = Modifier.size(36.dp),
@@ -2855,7 +5981,7 @@ private fun TrainingScreen(onOpenDrawer: () -> Unit) {
                                 ) {
                                     Icon(
                                         if (p.isRestDay) Icons.Default.SelfImprovement else Icons.Default.Check,
-                                        contentDescription = if (p.isRestDay) "Marcar recuperacao de hoje como feita" else "Marcar treino como feito",
+                                        contentDescription = if (p.isRestDay) "Marcar recuperação de hoje como feita" else "Marcar treino como feito",
                                         tint = Color.White
                                     )
                                 }
@@ -2867,7 +5993,7 @@ private fun TrainingScreen(onOpenDrawer: () -> Unit) {
                                             durationMin = durationMinutesFromPlan(p.durationText),
                                             kcal = estimatedWorkoutCalories(p, trainingGoal),
                                             createdAtEpochMs = completionEpochForPlannedDate(plannedDate),
-                                            dateTime = "Registado depois ${p.dayLabel} • ${getCurrentTimeText()}"
+                                            dateTime = "Registado depois de ${p.dayLabel} • ${getCurrentTimeText()}"
                                         )
                                     },
                                     modifier = Modifier.size(36.dp),
@@ -2930,7 +6056,7 @@ private fun TrainingScreen(onOpenDrawer: () -> Unit) {
                         }
                         
                         Row(
-                            modifier = Modifier.widthIn(max = 132.dp),
+                            modifier = Modifier.widthIn(max = 112.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.End
                         ) {
@@ -2943,7 +6069,7 @@ private fun TrainingScreen(onOpenDrawer: () -> Unit) {
                                 color = Color(0xFF475569)
                             )
                             Spacer(Modifier.width(8.dp))
-                            IconButton(onClick = { vm.deleteWorkout(w) }) {
+                            IconButton(onClick = { vm.deleteWorkout(w) }, modifier = Modifier.size(34.dp)) {
                                 Icon(Icons.Default.Delete, contentDescription = "Eliminar", tint = Color(0xFFB91C1C), modifier = Modifier.size(20.dp))
                             }
                         }
@@ -2960,7 +6086,7 @@ private fun TrainingScreen(onOpenDrawer: () -> Unit) {
                     Column(Modifier.padding(14.dp)) {
                         Text("Ação rápida", fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(6.dp))
-                        Text("Regista o teu treino para manter o progresso semanal.", color = Color(0xFF64748B))
+                        Text("Regista o teu treino para manter o progresso da semana.", color = Color(0xFF64748B))
                         Spacer(Modifier.height(10.dp))
                         var showAddWorkout by remember { mutableStateOf(false) }
 
@@ -3076,13 +6202,13 @@ private fun WorkoutDetailsDialog(day: WorkoutPlanEntry, goal: String, onDismiss:
                                 tint = MaterialTheme.colorScheme.primary
                             )
                             Spacer(Modifier.width(8.dp))
-                            Text("Exemplo em video", fontWeight = FontWeight.SemiBold)
+                            Text("Exemplo em vídeo", fontWeight = FontWeight.SemiBold)
                         }
                         Text(
                             if (day.isRestDay) {
-                                "Abrimos uma demonstracao de mobilidade e recuperacao para orientar este dia."
+                                "Abrimos uma demonstração de mobilidade e recuperação para orientar este dia."
                             } else {
-                                "Veja um exemplo visual do treino antes de executar para melhorar tecnica e confianca."
+                                "Vê um exemplo visual do treino antes de executar, para melhorares a técnica e a confiança."
                             },
                             color = Color(0xFF64748B),
                             style = MaterialTheme.typography.bodySmall
@@ -3094,7 +6220,7 @@ private fun WorkoutDetailsDialog(day: WorkoutPlanEntry, goal: String, onDismiss:
                         ) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text("Abrir video de exemplo")
+                            Text("Abrir vídeo de exemplo")
                         }
                     }
                 }
@@ -3135,7 +6261,7 @@ private fun WorkoutDetailsDialog(day: WorkoutPlanEntry, goal: String, onDismiss:
                                 Text(ex, color = Color(0xFF0F172A))
                                 Spacer(Modifier.height(4.dp))
                                 Text(
-                                    "Toque para ver a execucao",
+                                    "Toque para ver a execução",
                                     color = Color(0xFF64748B),
                                     style = MaterialTheme.typography.labelSmall
                                 )
@@ -3181,12 +6307,28 @@ private fun AssistantMiniStat(label: String, value: String, modifier: Modifier =
 private fun ProfileScreen(userName: String, userEmail: String, onLogout: () -> Unit, onOpenDrawer: () -> Unit) {
     val vm: ProfileViewModel = viewModel()
     val profile = vm.profile.collectAsState().value
+    val context = LocalContext.current
 
     var ageText by remember(profile) { mutableStateOf((profile?.age ?: 0).toString()) }
     var goal by remember(profile) { mutableStateOf(profile?.goal ?: "Manter Físico") }
     var heightText by remember(profile) { mutableStateOf((profile?.heightCm ?: 170).toString()) }
     var weightText by remember(profile) { mutableStateOf((profile?.weightKg ?: 75f).toString()) }
     var notifications by remember(profile) { mutableStateOf(profile?.notificationsEnabled ?: true) }
+    var avatarPath by remember(profile) { mutableStateOf(profile?.avatarPath.orEmpty()) }
+    var hydrationReminderMinutes by remember(profile) { mutableStateOf(profile?.hydrationReminderMinutes ?: 0) }
+
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->
+        if (bitmap != null) {
+            avatarPath = saveAvatarBitmap(context, bitmap)
+        }
+    }
+    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            saveAvatarFromUri(context, uri)?.let { savedPath ->
+                avatarPath = savedPath
+            }
+        }
+    }
 
     val alphaAnim = remember { Animatable(0f) }
     LaunchedEffect(Unit) { alphaAnim.animateTo(1f, tween(1000)) }
@@ -3222,15 +6364,12 @@ private fun ProfileScreen(userName: String, userEmail: String, onLogout: () -> U
                     .padding(bottom = 8.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(54.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.22f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
-                    }
+                    AppAvatar(
+                        avatarPath = avatarPath,
+                        size = 64.dp,
+                        placeholderIconSize = 34.dp,
+                        placeholderTint = Color.White
+                    )
                     Spacer(Modifier.width(12.dp))
                     Column {
                         Text(userName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
@@ -3258,6 +6397,30 @@ private fun ProfileScreen(userName: String, userEmail: String, onLogout: () -> U
                     elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
                 ) {
                     Column(Modifier.padding(14.dp)) {
+                        Text("Foto de perfil", fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedButton(
+                                onClick = { cameraLauncher.launch(null) },
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.PhotoCamera, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Tirar foto")
+                            }
+                            OutlinedButton(
+                                onClick = { galleryLauncher.launch("image/*") },
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.Collections, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Escolher")
+                            }
+                        }
+
+                        Spacer(Modifier.height(14.dp))
                         Text("Idade", fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(6.dp))
                         OutlinedTextField(
@@ -3300,13 +6463,44 @@ private fun ProfileScreen(userName: String, userEmail: String, onLogout: () -> U
                             Switch(checked = notifications, onCheckedChange = { notifications = it })
                         }
 
+                        Spacer(Modifier.height(10.dp))
+                        Text("Intervalo do alerta de água", fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            hydrationReminderOptions().forEach { option ->
+                                FilterChip(
+                                    selected = hydrationReminderMinutes == option.minutes,
+                                    onClick = { hydrationReminderMinutes = option.minutes },
+                                    label = { Text(option.label) }
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            if (hydrationReminderMinutes == 0) {
+                                "Sem seleção, o app mantém o intervalo padrão atual."
+                            } else {
+                                "Os lembretes passam a seguir ${hydrationReminderLabel(hydrationReminderMinutes)}."
+                            },
+                            color = Color(0xFF64748B),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+
                         Spacer(Modifier.height(12.dp))
                         Button(
                             onClick = {
                                 val a = ageText.toIntOrNull() ?: 0
                                 val h = heightText.toIntOrNull() ?: 170
                                 val w = weightText.replace(",", ".").toFloatOrNull() ?: 75f
-                                vm.save(a, goal, h, w, notifications)
+                                vm.save(a, goal, h, w, notifications, avatarPath, hydrationReminderMinutes)
+                                val (consumedMl, goalMl) = HydrationReminderManager.currentHydration(context)
+                                HydrationReminderManager.syncState(
+                                    context = context,
+                                    consumedMl = consumedMl,
+                                    goalMl = goalMl,
+                                    notificationsEnabled = notifications,
+                                    intervalMinutes = hydrationReminderMinutes
+                                )
                             },
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth()
@@ -3428,7 +6622,9 @@ private data class WorkoutPlanEntry(
     val dayOfWeek: Int,
     val workoutTitle: String,
     val durationText: String,
-    val isRestDay: Boolean = false
+    val isRestDay: Boolean = false,
+    val isAutoRescheduled: Boolean = false,
+    val rescheduledFromDayLabel: String? = null
 )
 
 private data class PlanRotationInfo(
@@ -3443,24 +6639,24 @@ private fun buildGoalBasedWorkoutPlan(goal: String, planIndex: Int): List<Workou
     return when (normalizedGoal) {
         "lose" -> listOf(
             WorkoutPlanEntry("Seg", Calendar.MONDAY, if (safePlanIndex % 2 == 0) "HIIT + Corrida" else "HIIT + Bike", "40 min"),
-            WorkoutPlanEntry("Ter", Calendar.TUESDAY, "Circuito metabolico", "45 min"),
+            WorkoutPlanEntry("Ter", Calendar.TUESDAY, "Circuito metabólico", "45 min"),
             WorkoutPlanEntry("Qua", Calendar.WEDNESDAY, if (safePlanIndex < 2) "Corrida progressiva" else "Escada + Core", "35 min"),
             WorkoutPlanEntry("Qui", Calendar.THURSDAY, "Mobilidade e caminhada", "30 min", isRestDay = true),
-            WorkoutPlanEntry("Sex", Calendar.FRIDAY, if (safePlanIndex % 2 == 0) "Full body dinamico" else "HIIT + Core", "45 min")
+            WorkoutPlanEntry("Sex", Calendar.FRIDAY, if (safePlanIndex % 2 == 0) "Full body dinâmico" else "HIIT + Core", "45 min")
         )
         "build" -> listOf(
-            WorkoutPlanEntry("Seg", Calendar.MONDAY, if (safePlanIndex % 2 == 0) "Peito + Triceps" else "Peito + Ombro", "60 min"),
-            WorkoutPlanEntry("Ter", Calendar.TUESDAY, if (safePlanIndex < 2) "Costas + Biceps" else "Costas pesada", "60 min"),
+            WorkoutPlanEntry("Seg", Calendar.MONDAY, if (safePlanIndex % 2 == 0) "Peito + Tríceps" else "Peito + Ombro", "60 min"),
+            WorkoutPlanEntry("Ter", Calendar.TUESDAY, if (safePlanIndex < 2) "Costas + Bíceps" else "Costas pesadas", "60 min"),
             WorkoutPlanEntry("Qua", Calendar.WEDNESDAY, "Descanso ativo", "Mobilidade", isRestDay = true),
             WorkoutPlanEntry("Qui", Calendar.THURSDAY, if (safePlanIndex % 2 == 0) "Perna pesada" else "Perna + Core", "65 min"),
-            WorkoutPlanEntry("Sex", Calendar.FRIDAY, if (safePlanIndex < 2) "Ombro + Bracos" else "Upper body carga", "55 min")
+            WorkoutPlanEntry("Sex", Calendar.FRIDAY, if (safePlanIndex < 2) "Ombro + Braços" else "Upper body com carga", "55 min")
         )
         else -> listOf(
             WorkoutPlanEntry("Seg", Calendar.MONDAY, if (safePlanIndex % 2 == 0) "Peito + Core" else "Full body moderado", "50 min"),
             WorkoutPlanEntry("Ter", Calendar.TUESDAY, "Cardio moderado", "30 min"),
-            WorkoutPlanEntry("Qua", Calendar.WEDNESDAY, if (safePlanIndex < 2) "Costas + Biceps" else "Pernas moderado", "50 min"),
+            WorkoutPlanEntry("Qua", Calendar.WEDNESDAY, if (safePlanIndex < 2) "Costas + Bíceps" else "Pernas moderadas", "50 min"),
             WorkoutPlanEntry("Qui", Calendar.THURSDAY, "Descanso ativo", "Mobilidade", isRestDay = true),
-            WorkoutPlanEntry("Sex", Calendar.FRIDAY, if (safePlanIndex % 2 == 0) "Pernas + Ombro" else "Full body tecnico", "50 min")
+            WorkoutPlanEntry("Sex", Calendar.FRIDAY, if (safePlanIndex % 2 == 0) "Pernas + Ombro" else "Full body técnico", "50 min")
         )
     }
 }
@@ -3502,6 +6698,79 @@ private fun calendarForCurrentWeekDay(dayOfWeek: Int): Calendar {
     }
 }
 
+private fun buildSmartWeeklyWorkoutPlan(
+    basePlan: List<WorkoutPlanEntry>,
+    workouts: List<WorkoutEntity>,
+    today: Calendar
+): List<WorkoutPlanEntry> {
+    if (basePlan.isEmpty()) return basePlan
+
+    val displayPlan = basePlan.toMutableList()
+    val missedWorkouts = basePlan.filter { entry ->
+        if (entry.isRestDay) return@filter false
+        val plannedDate = calendarForCurrentWeekDay(entry.dayOfWeek)
+        !hasWorkoutOnDate(workouts, plannedDate) && isPastPlannedWorkout(plannedDate)
+    }
+
+    if (missedWorkouts.isEmpty()) return displayPlan
+
+    val availableRestSlots = displayPlan.withIndex()
+        .filter { (_, entry) ->
+            entry.isRestDay && isSameOrAfterTodayInCurrentWeek(entry.dayOfWeek, today.get(Calendar.DAY_OF_WEEK))
+        }
+        .map { it.index }
+        .toMutableList()
+
+    val extraWeekendSlots = mutableListOf(
+        WorkoutPlanEntry("Sáb", Calendar.SATURDAY, "Descanso ativo", "Mobilidade", isRestDay = true),
+        WorkoutPlanEntry("Dom", Calendar.SUNDAY, "Recuperação leve", "Mobilidade", isRestDay = true)
+    ).filter { isSameOrAfterTodayInCurrentWeek(it.dayOfWeek, today.get(Calendar.DAY_OF_WEEK)) }.toMutableList()
+
+    val appendedEntries = mutableListOf<WorkoutPlanEntry>()
+
+    missedWorkouts.forEach { missed ->
+        val rescheduledEntry = { target: WorkoutPlanEntry ->
+            target.copy(
+                workoutTitle = missed.workoutTitle,
+                durationText = missed.durationText,
+                isRestDay = false,
+                isAutoRescheduled = true,
+                rescheduledFromDayLabel = missed.dayLabel
+            )
+        }
+
+        if (availableRestSlots.isNotEmpty()) {
+            val index = availableRestSlots.removeAt(0)
+            displayPlan[index] = rescheduledEntry(displayPlan[index])
+        } else if (extraWeekendSlots.isNotEmpty()) {
+            val weekendSlot = extraWeekendSlots.removeAt(0)
+            appendedEntries += rescheduledEntry(weekendSlot)
+        }
+    }
+
+    return (displayPlan + appendedEntries).sortedBy { mondayFirstDayOrder(it.dayOfWeek) }
+}
+
+private fun isSameOrAfterTodayInCurrentWeek(dayOfWeek: Int, todayDayOfWeek: Int): Boolean {
+    val targetIndex = mondayFirstDayOrder(dayOfWeek)
+    val todayIndex = mondayFirstDayOrder(todayDayOfWeek)
+    if (targetIndex == -1 || todayIndex == -1) return false
+    return targetIndex >= todayIndex
+}
+
+private fun mondayFirstDayOrder(dayOfWeek: Int): Int {
+    return when (dayOfWeek) {
+        Calendar.MONDAY -> 0
+        Calendar.TUESDAY -> 1
+        Calendar.WEDNESDAY -> 2
+        Calendar.THURSDAY -> 3
+        Calendar.FRIDAY -> 4
+        Calendar.SATURDAY -> 5
+        Calendar.SUNDAY -> 6
+        else -> Int.MAX_VALUE
+    }
+}
+
 private fun isPastPlannedWorkout(targetDate: Calendar): Boolean {
     val todayStart = Calendar.getInstance().apply {
         set(Calendar.HOUR_OF_DAY, 0)
@@ -3529,10 +6798,403 @@ private fun completionEpochForPlannedDate(plannedDate: Calendar): Long {
 }
 
 private fun compactWorkoutDateLabel(dateTime: String): String {
-    return when {
-        dateTime.startsWith("Concluido ") -> dateTime.removePrefix("Concluido ")
-        dateTime.startsWith("Registado depois ") -> dateTime.removePrefix("Registado depois ")
+    val normalized = when {
+        dateTime.startsWith("Concluído ") -> dateTime.removePrefix("Concluído ")
+        dateTime.startsWith("Registado depois de ") -> dateTime.removePrefix("Registado depois de ")
         else -> dateTime
+    }
+    return normalized
+        .substringBefore(" • ")
+        .substringBefore(" â€¢ ")
+        .trim()
+}
+
+private fun notificationTimeLabel(createdAtEpochMs: Long): String {
+    val diffMinutes = ((System.currentTimeMillis() - createdAtEpochMs) / 60000L).coerceAtLeast(0)
+    return when {
+        diffMinutes < 1 -> "agora"
+        diffMinutes < 60 -> "há ${diffMinutes} min"
+        diffMinutes < 1440 -> "há ${diffMinutes / 60} h"
+        else -> SimpleDateFormat("dd/MM HH:mm", Locale.getDefault()).format(Date(createdAtEpochMs))
+    }
+}
+
+private fun progressPeriodDays(filter: GoalsFilter): Int {
+    return when (filter) {
+        GoalsFilter.WEEK -> 7
+        GoalsFilter.MONTH -> 30
+        GoalsFilter.YEAR -> 365
+    }
+}
+
+private fun buildGoalSummaries(
+    filter: GoalsFilter,
+    workouts: List<WorkoutEntity>,
+    mealHistory: Map<String, List<MealEntity>>,
+    caloriesTarget: Int,
+    workoutGoalPerWeek: Int
+): List<GoalProgressSummary> {
+    val days = progressPeriodDays(filter)
+    val workoutEntries = workouts.filter { it.createdAtEpochMs >= periodStartMillis(filter) }
+    val workoutDays = workoutEntries
+        .map { dayKey(it.createdAtEpochMs) }
+        .distinct()
+        .size
+    val targetWorkoutDays = when (filter) {
+        GoalsFilter.WEEK -> workoutGoalPerWeek
+        GoalsFilter.MONTH -> workoutGoalPerWeek * 4
+        GoalsFilter.YEAR -> workoutGoalPerWeek * 52
+    }.coerceAtLeast(1)
+
+    val mealDays = mealHistory
+        .filterKeys { key -> isDateKeyInsidePeriod(key, filter) }
+        .mapValues { (_, meals) -> meals.sumOf { it.calories } }
+
+    val nutritionDaysOnTarget = mealDays.count { (_, totalCalories) ->
+        totalCalories in (caloriesTarget * 0.8f).toInt()..(caloriesTarget * 1.1f).toInt()
+    }
+    val activeDays = (workoutEntries.map { dayKey(it.createdAtEpochMs) } + mealDays.keys).distinct().size
+
+    return listOf(
+        GoalProgressSummary(
+            title = "Meta de treino",
+            value = "$workoutDays/$targetWorkoutDays",
+            subtitle = "Dias com treino registado no período selecionado.",
+            progress = workoutDays / targetWorkoutDays.toFloat(),
+            accent = Color(0xFF2563EB)
+        ),
+        GoalProgressSummary(
+            title = "Meta nutricional",
+            value = "$nutritionDaysOnTarget/${mealDays.size.coerceAtLeast(1)}",
+            subtitle = "Dias em que as calorias ficaram numa faixa adequada da meta.",
+            progress = if (mealDays.isEmpty()) 0f else nutritionDaysOnTarget / mealDays.size.toFloat(),
+            accent = Color(0xFF16A34A)
+        ),
+        GoalProgressSummary(
+            title = "Dias ativos",
+            value = "$activeDays/$days",
+            subtitle = "Dias com atividade registada entre refeições ou treinos.",
+            progress = activeDays / days.toFloat(),
+            accent = Color(0xFFF59E0B)
+        )
+    )
+}
+
+private fun buildProgressChartBars(
+    filter: GoalsFilter,
+    workouts: List<WorkoutEntity>,
+    mealHistory: Map<String, List<MealEntity>>
+): List<ProgressChartBar> {
+    val now = Calendar.getInstance()
+    return when (filter) {
+        GoalsFilter.WEEK -> {
+            (6 downTo 0).map { offset ->
+                val calendar = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -offset) }
+                val key = dayKey(calendar.timeInMillis)
+                val workoutCount = workouts.count { dayKey(it.createdAtEpochMs) == key }
+                val mealCount = mealHistory[key]?.size ?: 0
+                ProgressChartBar(label = weekDayShortLabel(calendar), value = (workoutCount + mealCount).toFloat())
+            }
+        }
+        GoalsFilter.MONTH -> {
+            (3 downTo 0).map { offset ->
+                val start = Calendar.getInstance().apply {
+                    set(Calendar.DAY_OF_MONTH, 1)
+                    add(Calendar.MONTH, -offset)
+                }
+                val month = start.get(Calendar.MONTH)
+                val year = start.get(Calendar.YEAR)
+                val total = workouts.count {
+                    val c = Calendar.getInstance().apply { timeInMillis = it.createdAtEpochMs }
+                    c.get(Calendar.MONTH) == month && c.get(Calendar.YEAR) == year
+                } + mealHistory.filterKeys {
+                    val parsed = parseDateKey(it) ?: return@filterKeys false
+                    parsed.get(Calendar.MONTH) == month && parsed.get(Calendar.YEAR) == year
+                }.values.sumOf { it.size }
+                ProgressChartBar(label = monthLabel(start), value = total.toFloat())
+            }
+        }
+        GoalsFilter.YEAR -> {
+            (11 downTo 0).map { offset ->
+                val monthCal = Calendar.getInstance().apply {
+                    set(Calendar.DAY_OF_MONTH, 1)
+                    add(Calendar.MONTH, -offset)
+                }
+                val month = monthCal.get(Calendar.MONTH)
+                val year = monthCal.get(Calendar.YEAR)
+                val total = workouts.count {
+                    val c = Calendar.getInstance().apply { timeInMillis = it.createdAtEpochMs }
+                    c.get(Calendar.MONTH) == month && c.get(Calendar.YEAR) == year
+                } + mealHistory.filterKeys {
+                    val parsed = parseDateKey(it) ?: return@filterKeys false
+                    parsed.get(Calendar.MONTH) == month && parsed.get(Calendar.YEAR) == year
+                }.values.sumOf { it.size }
+                ProgressChartBar(label = monthLabel(monthCal).take(3), value = total.toFloat())
+            }
+        }
+    }
+}
+
+private fun periodStartMillis(filter: GoalsFilter): Long {
+    return Calendar.getInstance().apply {
+        when (filter) {
+            GoalsFilter.WEEK -> add(Calendar.DAY_OF_YEAR, -6)
+            GoalsFilter.MONTH -> add(Calendar.DAY_OF_YEAR, -29)
+            GoalsFilter.YEAR -> add(Calendar.DAY_OF_YEAR, -364)
+        }
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+}
+
+private fun isDateKeyInsidePeriod(dateKey: String, filter: GoalsFilter): Boolean {
+    val parsed = parseDateKey(dateKey) ?: return false
+    return parsed.timeInMillis >= periodStartMillis(filter)
+}
+
+private fun isDateKeyInCurrentWeek(dateKey: String): Boolean {
+    val parsed = parseDateKey(dateKey) ?: return false
+    val startOfWeek = Calendar.getInstance().apply {
+        firstDayOfWeek = Calendar.MONDAY
+        set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }
+    val endOfWeek = Calendar.getInstance().apply {
+        timeInMillis = startOfWeek.timeInMillis
+        add(Calendar.DAY_OF_YEAR, 7)
+    }
+    return parsed.timeInMillis in startOfWeek.timeInMillis until endOfWeek.timeInMillis
+}
+
+private fun parseDateKey(dateKey: String): Calendar? {
+    val parsedDate = runCatching {
+        SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(dateKey)
+    }.getOrNull() ?: return null
+    return Calendar.getInstance().apply { time = parsedDate }
+}
+
+private fun dayKey(epochMs: Long): String {
+    return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(epochMs))
+}
+
+private fun weekDayShortLabel(calendar: Calendar): String {
+    return when (calendar.get(Calendar.DAY_OF_WEEK)) {
+        Calendar.MONDAY -> "Seg"
+        Calendar.TUESDAY -> "Ter"
+        Calendar.WEDNESDAY -> "Qua"
+        Calendar.THURSDAY -> "Qui"
+        Calendar.FRIDAY -> "Sex"
+        Calendar.SATURDAY -> "Sab"
+        else -> "Dom"
+    }
+}
+
+private fun monthLabel(calendar: Calendar): String {
+    return SimpleDateFormat("MMM", Locale("pt", "PT")).format(calendar.time).replaceFirstChar {
+        if (it.isLowerCase()) it.titlecase(Locale("pt", "PT")) else it.toString()
+    }
+}
+
+private fun buildFitnessCalendarMonthState(
+    monthOffset: Int,
+    mealHistory: Map<String, List<MealEntity>>,
+    hydrationHistory: Map<String, com.example.fitnessapp.data.HydrationEntity>,
+    workouts: List<WorkoutEntity>
+): FitnessCalendarMonthState {
+    val targetMonth = Calendar.getInstance().apply {
+        set(Calendar.DAY_OF_MONTH, 1)
+        add(Calendar.MONTH, monthOffset)
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }
+    val startGrid = (targetMonth.clone() as Calendar).apply {
+        val dayOrder = mondayFirstDayOrder(get(Calendar.DAY_OF_WEEK))
+        add(Calendar.DAY_OF_YEAR, -dayOrder)
+    }
+    val workoutKeys = workouts.groupBy { dayKey(it.createdAtEpochMs) }
+    val todayKey = dayKey(System.currentTimeMillis())
+    val days = buildList {
+        repeat(42) { index ->
+            val day = (startGrid.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, index) }
+            val key = dayKey(day.timeInMillis)
+            val meals = mealHistory[key].orEmpty()
+            val hydration = hydrationHistory[key]
+            val hydrationPercent = if (hydration != null && hydration.goalMl > 0) {
+                ((hydration.consumedMl / hydration.goalMl.toFloat()) * 100f).toInt().coerceIn(0, 100)
+            } else 0
+            val dayWorkouts = workoutKeys[key].orEmpty()
+            val hasWorkout = dayWorkouts.isNotEmpty()
+            val hitHydrationGoal = hydration != null && hydration.consumedMl >= hydration.goalMl && hydration.goalMl > 0
+            val hydrationText = if (hydration != null) {
+                "${hydration.consumedMl} / ${hydration.goalMl} ml"
+            } else {
+                "Sem registo de água"
+            }
+            add(
+                FitnessCalendarDayUi(
+                    dateKey = key,
+                    dayNumberLabel = day.get(Calendar.DAY_OF_MONTH).toString(),
+                    prettyLabel = SimpleDateFormat("dd 'de' MMMM", Locale("pt", "PT")).format(day.time),
+                    isCurrentMonth = day.get(Calendar.MONTH) == targetMonth.get(Calendar.MONTH),
+                    isToday = key == todayKey,
+                    hasWorkout = hasWorkout,
+                    mealCount = meals.size,
+                    hitHydrationGoal = hitHydrationGoal,
+                    hydrationPercent = hydrationPercent,
+                    summaryText = buildCalendarDaySummary(hasWorkout, meals.size, hydrationPercent, hitHydrationGoal),
+                    workoutTitles = dayWorkouts.map { it.title },
+                    mealTitles = meals.map { "${it.title} • ${it.calories} kcal" },
+                    hydrationText = hydrationText
+                )
+            )
+        }
+    }
+    return FitnessCalendarMonthState(
+        title = monthTitle(targetMonth),
+        monthKey = "${targetMonth.get(Calendar.YEAR)}-${targetMonth.get(Calendar.MONTH)}",
+        weekLabels = listOf("Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"),
+        days = days
+    )
+}
+
+private fun buildCalendarDaySummary(
+    hasWorkout: Boolean,
+    mealCount: Int,
+    hydrationPercent: Int,
+    hitHydrationGoal: Boolean
+): String {
+    return when {
+        hasWorkout && mealCount > 0 && hitHydrationGoal ->
+            "Dia completo: houve treino, refeições registadas e meta de água batida."
+        hasWorkout && mealCount > 0 ->
+            "Dia ativo com treino e alimentação acompanhada."
+        hasWorkout ->
+            "Treino registado neste dia. Boa consistência."
+        mealCount > 0 && hydrationPercent > 0 ->
+            "Dia com alimentação acompanhada e hidratação em progresso."
+        mealCount > 0 ->
+            "Existem refeições registadas neste dia."
+        hydrationPercent > 0 ->
+            "A hidratação foi acompanhada neste dia."
+        else ->
+            "Ainda não existem registos neste dia."
+    }
+}
+
+private fun monthTitle(calendar: Calendar): String {
+    val month = SimpleDateFormat("MMMM", Locale("pt", "PT")).format(calendar.time)
+    return month.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale("pt", "PT")) else it.toString() } +
+        " ${calendar.get(Calendar.YEAR)}"
+}
+
+private fun formatMetric(value: Float): String {
+    return if (value % 1f == 0f) value.toInt().toString() else String.format(Locale.getDefault(), "%.1f", value)
+}
+
+private fun formatMetricsDate(epochMs: Long): String {
+    return SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date(epochMs))
+}
+
+private fun metricsTrendLabel(latest: BodyMetricsEntity?, previous: BodyMetricsEntity?): String {
+    if (latest == null || previous == null) return "A iniciar"
+    val delta = latest.weightKg - previous.weightKg
+    return when {
+        delta > 0.2f -> "Subida"
+        delta < -0.2f -> "Descida"
+        else -> "Estavel"
+    }
+}
+
+private fun weeklyAutoSummary(
+    workouts: List<WorkoutEntity>,
+    meals: List<MealEntity>,
+    weeklyWorkoutGoal: Int,
+    weeklyMinutes: Int,
+    weeklyBurnedKcal: Int
+): WeeklyAutoSummary {
+    val workoutDays = workouts.map { dayKey(it.createdAtEpochMs) }.distinct().size
+    val mealDays = meals.map { dayKey(it.createdAtEpochMs) }.distinct().size
+    val totalMeals = meals.size
+    val averageCalories = if (mealDays > 0) meals.sumOf { it.calories } / mealDays else 0
+
+    val headline = when {
+        workoutDays >= weeklyWorkoutGoal && mealDays >= 4 -> "Semana muito consistente"
+        workoutDays >= weeklyWorkoutGoal -> "Treino em destaque"
+        mealDays >= 4 -> "Boa consistência alimentar"
+        workouts.isNotEmpty() || meals.isNotEmpty() -> "A semana já começou a andar"
+        else -> "Ainda sem registos suficientes"
+    }
+
+    val supporting = when {
+        workouts.isEmpty() && meals.isEmpty() ->
+            "Assim que registares treinos e refeições, o app passa a resumir automaticamente a tua evolução semanal."
+        workoutDays >= weeklyWorkoutGoal && mealDays >= 4 ->
+            "Bateste a meta de treinos da semana e mantiveste presença na alimentação. Até agora somas $weeklyMinutes min de treino e $weeklyBurnedKcal kcal queimadas."
+        workoutDays >= weeklyWorkoutGoal ->
+            "A meta de treinos desta semana já foi atingida. Agora vale manter a regularidade na alimentação para fechar a semana ainda melhor."
+        mealDays >= 4 ->
+            "Tens boa regularidade nas refeições registadas. A média está em $averageCalories kcal por dia com registo, o que ajuda a acompanhar melhor a tua meta."
+        else ->
+            "Já tens $workoutDays dia(s) com treino e $mealDays dia(s) com refeições registadas. Mantém o ritmo para construir uma semana mais sólida."
+    }
+
+    return WeeklyAutoSummary(
+        headline = headline,
+        supporting = supporting,
+        trainingValue = "$workoutDays/$weeklyWorkoutGoal",
+        nutritionValue = "$totalMeals reg.",
+        activeDaysValue = "${(workouts.map { dayKey(it.createdAtEpochMs) } + meals.map { dayKey(it.createdAtEpochMs) }).distinct().size}/7"
+    )
+}
+
+private fun shouldShowNutritionAssistantHint(context: Context): Boolean {
+    val prefs = context.getSharedPreferences("nutrition_ui_prefs", Context.MODE_PRIVATE)
+    return !prefs.getBoolean("nutrition_assistant_hint_seen", false)
+}
+
+private fun markNutritionAssistantHintSeen(context: Context) {
+    context.getSharedPreferences("nutrition_ui_prefs", Context.MODE_PRIVATE)
+        .edit()
+        .putBoolean("nutrition_assistant_hint_seen", true)
+        .apply()
+}
+
+private fun shouldShowAppTour(context: Context, userId: String): Boolean {
+    val prefs = context.getSharedPreferences("app_tour_prefs", Context.MODE_PRIVATE)
+    return !prefs.getBoolean("tour_seen_$userId", false)
+}
+
+private fun markAppTourSeen(context: Context, userId: String) {
+    context.getSharedPreferences("app_tour_prefs", Context.MODE_PRIVATE)
+        .edit()
+        .putBoolean("tour_seen_$userId", true)
+        .apply()
+}
+
+private data class ReminderIntervalOption(val minutes: Int, val label: String)
+
+private fun hydrationReminderOptions(): List<ReminderIntervalOption> = listOf(
+    ReminderIntervalOption(0, "Padrão"),
+    ReminderIntervalOption(1, "1 min"),
+    ReminderIntervalOption(10, "10 min"),
+    ReminderIntervalOption(20, "20 min"),
+    ReminderIntervalOption(60, "1 hora")
+)
+
+private fun hydrationReminderLabel(minutes: Int): String {
+    return when (minutes) {
+        1 -> "alertas a cada 1 minuto"
+        10 -> "alertas a cada 10 minutos"
+        20 -> "alertas a cada 20 minutos"
+        60 -> "alertas a cada 1 hora"
+        else -> "o intervalo padrão"
     }
 }
 
@@ -3573,8 +7235,8 @@ private fun workoutMediaInfoFor(workoutTitle: String): WorkoutMediaInfo {
     }
     val searchQuery = when {
         workoutTitle.contains("Descanso", ignoreCase = true) || workoutTitle.contains("Mobilidade", ignoreCase = true) ->
-            "mobilidade recuperacao treino"
-        else -> "$workoutTitle treino exercicios"
+            "mobilidade recuperação treino"
+        else -> "$workoutTitle treino exercícios"
     }
     val videoUrl = videoSearchUrl(searchQuery)
     return WorkoutMediaInfo(icon = icon, videoUrl = videoUrl)
@@ -3638,37 +7300,444 @@ private fun currentPlanRotationInfo(): PlanRotationInfo {
 
 private fun trainingGoalSummary(goal: String): String {
     return when (normalizeTrainingGoal(goal)) {
-        "lose" -> "Foco em gasto calorico: mais repeticoes, menos pausa e cardio estrategico."
-        "build" -> "Foco em hipertrofia: menos repeticoes, mais carga e descansos um pouco maiores."
-        else -> "Foco em manutencao e definicao: 10 repeticoes com carga moderada e execucao controlada."
+        "lose" -> "Foco em gasto calórico: mais repetições, menos pausa e cardio estratégico."
+        "build" -> "Foco em hipertrofia: menos repetições, mais carga e descansos um pouco maiores."
+        else -> "Foco em manutenção e definição: 10 repetições com carga moderada e execução controlada."
     }
 }
 
 private fun workoutDetailsFor(workoutTitle: String, goal: String): List<String> {
     val normalizedGoal = normalizeTrainingGoal(goal)
     val preset = when (normalizedGoal) {
-        "lose" -> "3-4 series de 12-15 repeticoes"
-        "build" -> "4 series de 6-8 repeticoes com carga alta"
-        else -> "3-4 series de 10 repeticoes com carga moderada"
+        "lose" -> "3-4 séries de 12-15 repetições"
+        "build" -> "4 séries de 6-8 repetições com carga alta"
+        else -> "3-4 séries de 10 repetições com carga moderada"
     }
     return when (workoutTitle) {
-        "HIIT + Corrida" -> listOf("Corrida intervalada: 10 tiros de 30s forte / 60s leve", "Agachamento livre: $preset", "Avanco alternado: $preset", "Prancha: 3 x 40s")
-        "HIIT + Bike" -> listOf("Bike intervalada: 12 tiros de 40s forte / 20s leve", "Kettlebell swing: $preset", "Burpee controlado: 3 series de 12", "Abdominal infra: 3 series de 15")
-        "Circuito metabolico" -> listOf("Agachamento com halter: $preset", "Remada curvada: $preset", "Flexao inclinada: $preset", "Corrida leve: 12 min")
+        "HIIT + Corrida" -> listOf("Corrida intervalada: 10 tiros de 30s forte / 60s leve", "Agachamento livre: $preset", "Avanço alternado: $preset", "Prancha: 3 x 40s")
+        "HIIT + Bike" -> listOf("Bike intervalada: 12 tiros de 40s forte / 20s leve", "Kettlebell swing: $preset", "Burpee controlado: 3 séries de 12", "Abdominal infra: 3 séries de 15")
+        "Circuito metabólico" -> listOf("Agachamento com halter: $preset", "Remada curvada: $preset", "Flexão inclinada: $preset", "Corrida leve: 12 min")
         "Corrida progressiva" -> listOf("Corrida progressiva: 25 a 35 min", "Passada no step: $preset", "Prancha lateral: 3 x 30s por lado")
         "Escada + Core" -> listOf("Escada ou subida: 20 min em blocos", "Mountain climber: 4 x 20", "Prancha com toque no ombro: 3 x 16")
-        "Full body dinamico", "HIIT + Core" -> listOf("Agachamento com press: $preset", "Remada com halter: $preset", "Swing com halter: $preset", "Prancha: 3 x 45s")
-        "Peito + Triceps" -> listOf("Supino reto: $preset", "Supino inclinado: $preset", "Crucifixo: $preset", "Triceps corda: $preset")
-        "Peito + Ombro" -> listOf("Supino reto: $preset", "Desenvolvimento militar: $preset", "Elevacao lateral: $preset", "Crucifixo maquina: $preset")
-        "Costas + Biceps" -> listOf("Puxada frente: $preset", "Remada curvada: $preset", "Remada baixa: $preset", "Rosca direta: $preset")
-        "Costas pesada" -> listOf("Barra guiada: $preset", "Remada cavalinho: $preset", "Pulldown neutro: $preset", "Rosca martelo: $preset")
-        "Perna pesada" -> listOf("Agachamento livre: $preset", "Leg press: $preset", "Stiff: $preset", "Panturrilha em pe: 4 x 12")
-        "Perna + Core", "Pernas + Ombro", "Pernas moderado" -> listOf("Agachamento: $preset", "Leg press: $preset", "Cadeira extensora: $preset", "Prancha: 3 x 40s")
-        "Ombro + Bracos", "Upper body carga" -> listOf("Desenvolvimento com halteres: $preset", "Elevacao lateral: $preset", "Rosca direta: $preset", "Triceps frances: $preset")
-        "Peito + Core", "Full body moderado", "Full body tecnico" -> listOf("Supino com halter: $preset", "Agachamento goblet: $preset", "Remada unilateral: $preset", "Prancha: 3 x 30s")
-        "Cardio moderado" -> listOf("Eliptica ou corrida: 25-30 min em ritmo moderado", "Mobilidade de quadril: 3 x 12", "Abdominal dead bug: 3 x 12")
+        "Full body dinâmico", "HIIT + Core" -> listOf("Agachamento com press: $preset", "Remada com halter: $preset", "Swing com halter: $preset", "Prancha: 3 x 45s")
+        "Peito + Tríceps" -> listOf("Supino reto: $preset", "Supino inclinado: $preset", "Crucifixo: $preset", "Tríceps na corda: $preset")
+        "Peito + Ombro" -> listOf("Supino reto: $preset", "Desenvolvimento militar: $preset", "Elevação lateral: $preset", "Crucifixo na máquina: $preset")
+        "Costas + Bíceps" -> listOf("Puxada frente: $preset", "Remada curvada: $preset", "Remada baixa: $preset", "Rosca direta: $preset")
+        "Costas pesadas" -> listOf("Barra guiada: $preset", "Remada cavalinho: $preset", "Pulldown neutro: $preset", "Rosca martelo: $preset")
+        "Perna pesada" -> listOf("Agachamento livre: $preset", "Leg press: $preset", "Stiff: $preset", "Panturrilha em pé: 4 x 12")
+        "Perna + Core", "Pernas + Ombro", "Pernas moderadas" -> listOf("Agachamento: $preset", "Leg press: $preset", "Cadeira extensora: $preset", "Prancha: 3 x 40s")
+        "Ombro + Braços", "Upper body com carga" -> listOf("Desenvolvimento com halteres: $preset", "Elevação lateral: $preset", "Rosca direta: $preset", "Tríceps francês: $preset")
+        "Peito + Core", "Full body moderado", "Full body técnico" -> listOf("Supino com halter: $preset", "Agachamento goblet: $preset", "Remada unilateral: $preset", "Prancha: 3 x 30s")
+        "Cardio moderado" -> listOf("Elíptica ou corrida: 25-30 min em ritmo moderado", "Mobilidade de quadril: 3 x 12", "Abdominal dead bug: 3 x 12")
         else -> listOf("Caminhada leve: 25 min", "Mobilidade geral: 15 min", "Alongamentos ativos: 10 min")
     }
+}
+
+private enum class ExerciseLibraryCategory(
+    val label: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val accent: Color
+) {
+    All("Todas", Icons.Default.Apps, Color(0xFF475569)),
+    Chest("Peito", Icons.Default.FitnessCenter, Color(0xFFDC2626)),
+    Back("Costas", Icons.Default.AccessibilityNew, Color(0xFF2563EB)),
+    Legs("Pernas", Icons.Default.DirectionsRun, Color(0xFF16A34A)),
+    ShouldersArms("Ombros e Braços", Icons.Default.FitnessCenter, Color(0xFF9333EA)),
+    Core("Core", Icons.Default.Bolt, Color(0xFFF59E0B)),
+    Cardio("Cardio", Icons.Default.Favorite, Color(0xFFEF4444)),
+    Mobility("Mobilidade", Icons.Default.SelfImprovement, Color(0xFF0891B2))
+}
+
+private data class ExerciseLibraryItem(
+    val id: String,
+    val name: String,
+    val category: ExerciseLibraryCategory,
+    val focus: String,
+    val level: String,
+    val equipment: String,
+    val summary: String,
+    val steps: List<String>,
+    val tips: List<String>,
+    val commonMistakes: List<String>,
+    val videoQuery: String
+) {
+    val videoUrl: String
+        get() = videoSearchUrl(videoQuery)
+}
+
+private fun exerciseLibraryItems(): List<ExerciseLibraryItem> = listOf(
+    ExerciseLibraryItem(
+        id = "supino_reto",
+        name = "Supino reto",
+        category = ExerciseLibraryCategory.Chest,
+        focus = "Peito, ombros anteriores e tríceps",
+        level = "Intermédio",
+        equipment = "Barra e banco",
+        summary = "Exercício base para desenvolver força e volume no peitoral com estabilidade e controle de carga.",
+        steps = listOf(
+            "Deita no banco com os olhos alinhados à barra e os pés firmes no chão.",
+            "Retrai as escápulas, tira a barra do suporte e desce até a linha média do peito com controlo.",
+            "Empurra a barra para cima sem perder a tensão no tronco e sem bater os cotovelos no final."
+        ),
+        tips = listOf(
+            "Mantém o peito aberto e os ombros encaixados durante toda a série.",
+            "Usa ritmo controlado na descida para proteger a articulação do ombro.",
+            "Aperta os pés no solo para ganhar estabilidade."
+        ),
+        commonMistakes = listOf(
+            "Descer a barra para muito acima do peito, forçando os ombros.",
+            "Tirar os glúteos do banco para levantar a carga.",
+            "Perder o controlo da barra na fase excêntrica."
+        ),
+        videoQuery = "supino reto execucao correta academia"
+    ),
+    ExerciseLibraryItem(
+        id = "flexao",
+        name = "Flexão de braços",
+        category = ExerciseLibraryCategory.Chest,
+        focus = "Peito, core e tríceps",
+        level = "Iniciante",
+        equipment = "Peso corporal",
+        summary = "Movimento acessível para desenvolver empurrão, estabilidade do tronco e resistência muscular.",
+        steps = listOf(
+            "Coloca as mãos ligeiramente mais abertas do que os ombros e alinha corpo, quadril e pernas.",
+            "Desce o peito em direção ao chão com o abdómen firme e os cotovelos a cerca de 45 graus.",
+            "Empurra o solo até voltar à posição inicial sem deixar a lombar cair."
+        ),
+        tips = listOf(
+            "Se for necessário, começa com as mãos num banco para reduzir a dificuldade.",
+            "Mantém o pescoço neutro olhando para o chão.",
+            "Contrai o abdómen para o corpo subir em bloco."
+        ),
+        commonMistakes = listOf(
+            "Deixar a anca descer no meio da repetição.",
+            "Abrir demasiado os cotovelos.",
+            "Fazer amplitude muito curta e perder estímulo."
+        ),
+        videoQuery = "flexao de bracos tecnica correta"
+    ),
+    ExerciseLibraryItem(
+        id = "remada_curvada",
+        name = "Remada curvada",
+        category = ExerciseLibraryCategory.Back,
+        focus = "Costas, romboides e bíceps",
+        level = "Intermédio",
+        equipment = "Barra",
+        summary = "Excelente para espessura das costas e fortalecimento da postura quando feito com tronco firme.",
+        steps = listOf(
+            "Segura a barra, dobra ligeiramente os joelhos e inclina o tronco mantendo a coluna neutra.",
+            "Puxa a barra em direção ao abdómen levando os cotovelos para trás.",
+            "Desce com controlo sem arredondar as costas e repete com a mesma base."
+        ),
+        tips = listOf(
+            "Pensa em aproximar as escápulas no topo da remada.",
+            "Usa uma carga que permita manter o tronco estável.",
+            "Respira antes de puxar e trava o core."
+        ),
+        commonMistakes = listOf(
+            "Transformar o exercício num balanço de corpo.",
+            "Arredondar a lombar na descida.",
+            "Puxar com os braços e esquecer a contração das costas."
+        ),
+        videoQuery = "remada curvada barra execucao correta"
+    ),
+    ExerciseLibraryItem(
+        id = "puxada_frente",
+        name = "Puxada frente",
+        category = ExerciseLibraryCategory.Back,
+        focus = "Grande dorsal e estabilização escapular",
+        level = "Iniciante",
+        equipment = "Polia",
+        summary = "Um dos melhores movimentos para aprender a ativar dorsais e construir largura nas costas.",
+        steps = listOf(
+            "Senta com o peito alto e segura a barra com pegada aberta e firme.",
+            "Puxa em direção à parte superior do peito trazendo os cotovelos para baixo.",
+            "Sobe devagar até quase estender os braços, mantendo tensão na musculatura."
+        ),
+        tips = listOf(
+            "Mantém o tronco quase fixo e evita inclinar em excesso.",
+            "Começa a puxada pelas escápulas antes dos braços.",
+            "Fecha a repetição com controlo total da subida."
+        ),
+        commonMistakes = listOf(
+            "Puxar a barra atrás da nuca.",
+            "Usar impulso com o corpo para completar a carga.",
+            "Subir sem controlo e perder a tensão."
+        ),
+        videoQuery = "puxada frente na polia tecnica correta"
+    ),
+    ExerciseLibraryItem(
+        id = "agachamento_livre",
+        name = "Agachamento livre",
+        category = ExerciseLibraryCategory.Legs,
+        focus = "Quadríceps, glúteos e core",
+        level = "Intermédio",
+        equipment = "Barra",
+        summary = "Movimento global para força, coordenação e desenvolvimento de membros inferiores.",
+        steps = listOf(
+            "Posiciona a barra no alto das costas, abre os pés na largura dos ombros e ativa o abdómen.",
+            "Desce empurrando a anca para trás e os joelhos na linha dos pés até uma profundidade segura.",
+            "Sobe pressionando o solo e mantendo o peito firme até voltar à extensão."
+        ),
+        tips = listOf(
+            "Mantém o peso distribuído entre calcanhar e meio do pé.",
+            "Olha em frente para ajudar na estabilidade.",
+            "Trava o tronco antes de cada repetição."
+        ),
+        commonMistakes = listOf(
+            "Deixar os joelhos colapsarem para dentro.",
+            "Arredondar a lombar no fundo do movimento.",
+            "Subir primeiro com a anca e depois com o tronco."
+        ),
+        videoQuery = "agachamento livre execucao correta academia"
+    ),
+    ExerciseLibraryItem(
+        id = "leg_press",
+        name = "Leg press",
+        category = ExerciseLibraryCategory.Legs,
+        focus = "Quadríceps e glúteos com alta estabilidade",
+        level = "Iniciante",
+        equipment = "Máquina",
+        summary = "Boa opção para trabalhar pernas com controlo da trajetória e menor exigência técnica que o agachamento livre.",
+        steps = listOf(
+            "Senta bem apoiado, ajusta os pés na plataforma e segura as pegas laterais.",
+            "Desce a carga até onde consigas manter a lombar colada ao banco.",
+            "Empurra a plataforma sem esticar completamente os joelhos no topo."
+        ),
+        tips = listOf(
+            "Usa amplitude segura sem tirar a anca do banco.",
+            "Mantém os joelhos alinhados com a direção dos pés.",
+            "Controla a velocidade principalmente na descida."
+        ),
+        commonMistakes = listOf(
+            "Descer demasiado e arredondar a lombar.",
+            "Trancar os joelhos no final.",
+            "Colocar os pés muito baixos e sobrecarregar o joelho."
+        ),
+        videoQuery = "leg press execucao correta academia"
+    ),
+    ExerciseLibraryItem(
+        id = "desenvolvimento_halteres",
+        name = "Desenvolvimento com halteres",
+        category = ExerciseLibraryCategory.ShouldersArms,
+        focus = "Ombros, tríceps e estabilidade do core",
+        level = "Intermédio",
+        equipment = "Halteres",
+        summary = "Empurrão vertical importante para fortalecer ombros com liberdade de movimento e controlo individual.",
+        steps = listOf(
+            "Senta ou fica de pé com os halteres na linha dos ombros e o abdómen ativo.",
+            "Empurra os halteres para cima até quase juntar sobre a cabeça.",
+            "Desce devagar até a posição inicial mantendo punhos neutros."
+        ),
+        tips = listOf(
+            "Evita arquear demasiado a lombar.",
+            "Mantém os cotovelos ligeiramente à frente do corpo.",
+            "Usa amplitude completa sem perder estabilidade."
+        ),
+        commonMistakes = listOf(
+            "Bater os halteres no topo.",
+            "Transformar o movimento numa inclinação para trás.",
+            "Descer muito rápido e perder controlo."
+        ),
+        videoQuery = "desenvolvimento com halteres execucao correta"
+    ),
+    ExerciseLibraryItem(
+        id = "rosca_direta",
+        name = "Rosca direta",
+        category = ExerciseLibraryCategory.ShouldersArms,
+        focus = "Bíceps e antebraço",
+        level = "Iniciante",
+        equipment = "Barra",
+        summary = "Clássico para fortalecer o bíceps, com foco em controlo e eliminação de balanço corporal.",
+        steps = listOf(
+            "Fica de pé com a barra junto às coxas e os cotovelos próximos ao tronco.",
+            "Flexiona os cotovelos até elevar a barra sem mover os ombros para a frente.",
+            "Desce com controlo até quase estender totalmente os braços."
+        ),
+        tips = listOf(
+            "Mantém os cotovelos fixos para isolar melhor o bíceps.",
+            "Usa ritmo constante e sem trancos.",
+            "Expira ao subir e inspira ao descer."
+        ),
+        commonMistakes = listOf(
+            "Roubar com balanço do tronco.",
+            "Encolher os ombros durante a subida.",
+            "Encerrar a amplitude muito cedo."
+        ),
+        videoQuery = "rosca direta tecnica correta academia"
+    ),
+    ExerciseLibraryItem(
+        id = "prancha",
+        name = "Prancha",
+        category = ExerciseLibraryCategory.Core,
+        focus = "Core, estabilidade lombar e controlo corporal",
+        level = "Iniciante",
+        equipment = "Peso corporal",
+        summary = "Base de estabilidade para proteger a coluna e melhorar desempenho em quase todos os treinos.",
+        steps = listOf(
+            "Apoia antebraços e pontas dos pés no chão formando uma linha reta do ombro ao tornozelo.",
+            "Contrai abdómen e glúteos para evitar afundar a lombar.",
+            "Mantém a posição respirando de forma controlada pelo tempo definido."
+        ),
+        tips = listOf(
+            "Pensa em aproximar costelas e anca para ativar o centro do corpo.",
+            "Mantém o olhar para o chão e pescoço neutro.",
+            "Começa com tempos mais curtos e aumenta progressivamente."
+        ),
+        commonMistakes = listOf(
+            "Subir demasiado a anca e perder a linha do corpo.",
+            "Deixar a lombar afundar.",
+            "Prender a respiração durante toda a série."
+        ),
+        videoQuery = "prancha abdominal execucao correta"
+    ),
+    ExerciseLibraryItem(
+        id = "mountain_climber",
+        name = "Mountain climber",
+        category = ExerciseLibraryCategory.Core,
+        focus = "Core, cardio e coordenação",
+        level = "Intermédio",
+        equipment = "Peso corporal",
+        summary = "Combina ativação abdominal com componente cardiovascular, ótimo para circuitos e HIIT.",
+        steps = listOf(
+            "Entra em posição de prancha alta com mãos abaixo dos ombros.",
+            "Traz um joelho de cada vez em direção ao peito de forma alternada.",
+            "Mantém o tronco firme e acelera apenas se conseguires preservar a técnica."
+        ),
+        tips = listOf(
+            "Mantém o peso repartido entre mãos e ponta dos pés.",
+            "Executa primeiro devagar para fixar a mecânica.",
+            "Usa séries por tempo em vez de repetir sem critério."
+        ),
+        commonMistakes = listOf(
+            "Saltar excessivamente e perder a linha do corpo.",
+            "Deixar os ombros muito atrás das mãos.",
+            "Movimento curto e sem elevar o joelho."
+        ),
+        videoQuery = "mountain climber execucao correta"
+    ),
+    ExerciseLibraryItem(
+        id = "corrida_esteira",
+        name = "Corrida na esteira",
+        category = ExerciseLibraryCategory.Cardio,
+        focus = "Capacidade cardiovascular e gasto calórico",
+        level = "Iniciante",
+        equipment = "Esteira",
+        summary = "Excelente para condicionamento e controlo de ritmo, tanto em treino moderado quanto intervalado.",
+        steps = listOf(
+            "Começa com caminhada ativa para ajustar postura e respiração.",
+            "Aumenta gradualmente a velocidade mantendo passada curta e apoio suave.",
+            "Fecha o treino com desaceleração progressiva para recuperar frequência cardíaca."
+        ),
+        tips = listOf(
+            "Mantém o olhar em frente e os braços a acompanhar o ritmo.",
+            "Evita apoiar-te constantemente nas barras laterais.",
+            "Controla o impacto com passadas leves."
+        ),
+        commonMistakes = listOf(
+            "Começar demasiado forte sem aquecimento.",
+            "Correr a prender a respiração.",
+            "Inclinar o tronco em excesso."
+        ),
+        videoQuery = "corrida na esteira postura correta"
+    ),
+    ExerciseLibraryItem(
+        id = "bike_intervalada",
+        name = "Bike intervalada",
+        category = ExerciseLibraryCategory.Cardio,
+        focus = "Cardio, pernas e alta intensidade",
+        level = "Intermédio",
+        equipment = "Bicicleta",
+        summary = "Formato muito eficiente para elevar o gasto energético e melhorar condicionamento em menos tempo.",
+        steps = listOf(
+            "Ajusta selim e guiador para pedalar com boa extensão de joelho e postura neutra.",
+            "Alterna blocos curtos de intensidade alta com recuperação leve a moderada.",
+            "Mantém cadência estável e fecha com retorno gradual à calma."
+        ),
+        tips = listOf(
+            "Controla resistência e tempo de cada bloco.",
+            "Mantém os ombros relaxados durante o esforço.",
+            "Usa o core para estabilizar a pelve."
+        ),
+        commonMistakes = listOf(
+            "Pédalas demasiado pesadas logo no início.",
+            "Subir os ombros e tensionar o pescoço.",
+            "Perder consistência entre os intervalos."
+        ),
+        videoQuery = "bike intervalada spinning execucao correta"
+    ),
+    ExerciseLibraryItem(
+        id = "mobilidade_quadril",
+        name = "Mobilidade de quadril",
+        category = ExerciseLibraryCategory.Mobility,
+        focus = "Amplitude, controlo articular e prevenção",
+        level = "Iniciante",
+        equipment = "Peso corporal",
+        summary = "Sequência simples para melhorar conforto em agachamentos, passadas e corrida.",
+        steps = listOf(
+            "Posiciona-te em base estável, com apoio no chão ou num banco se precisares.",
+            "Executa rotações e aberturas de quadril com movimento controlado e sem dor.",
+            "Repete para os dois lados com respiração calma e foco na amplitude."
+        ),
+        tips = listOf(
+            "Faz estas séries no aquecimento ou em dias de recuperação.",
+            "Procura movimento limpo, não velocidade.",
+            "Mantém o tronco alto e o abdómen ativo."
+        ),
+        commonMistakes = listOf(
+            "Forçar amplitude com desconforto agudo.",
+            "Compensar com lombar em vez de mover o quadril.",
+            "Executar de forma apressada."
+        ),
+        videoQuery = "mobilidade de quadril exercicios guiados"
+    ),
+    ExerciseLibraryItem(
+        id = "alongamento_peitoral",
+        name = "Alongamento peitoral",
+        category = ExerciseLibraryCategory.Mobility,
+        focus = "Postura, abertura torácica e recuperação",
+        level = "Iniciante",
+        equipment = "Parede ou porta",
+        summary = "Alongamento útil para quem passa muitas horas sentado ou faz muito treino de empurrar.",
+        steps = listOf(
+            "Coloca o antebraço numa parede ou portal com o cotovelo à altura do ombro.",
+            "Roda levemente o tronco para o lado oposto até sentir alongamento no peito.",
+            "Mantém a respiração tranquila e repete do outro lado."
+        ),
+        tips = listOf(
+            "Usa intensidade leve a moderada, sem dor.",
+            "Evita elevar o ombro enquanto alongas.",
+            "Combina com mobilidade torácica para melhor resultado."
+        ),
+        commonMistakes = listOf(
+            "Forçar demasiado a articulação do ombro.",
+            "Prender a respiração.",
+            "Fazer o alongamento com o pescoço tenso."
+        ),
+        videoQuery = "alongamento peitoral postura correta"
+    )
+)
+
+private fun exerciseLibraryLevels(): List<String> = listOf("Todos", "Iniciante", "Intermédio")
+
+private fun loadExerciseFavorites(context: Context): Set<String> {
+    return context.getSharedPreferences("exercise_library_prefs", Context.MODE_PRIVATE)
+        .getStringSet("favorite_exercises", emptySet())
+        ?.toSet()
+        ?: emptySet()
+}
+
+private fun repairPtText(text: String): String = text
+
+private fun toggleExerciseFavorite(context: Context, currentFavorites: Set<String>, exerciseId: String): Set<String> {
+    val updated = currentFavorites.toMutableSet().apply {
+        if (!add(exerciseId)) remove(exerciseId)
+    }.toSet()
+    context.getSharedPreferences("exercise_library_prefs", Context.MODE_PRIVATE)
+        .edit()
+        .putStringSet("favorite_exercises", updated)
+        .apply()
+    return updated
 }
 
 /* -------------------- MODELOS SIMPLES -------------------- */
@@ -3738,7 +7807,7 @@ private fun AddMealDialog(
             }) { Text("Guardar") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
-        title = { Text("Adicionar refeicao") },
+        title = { Text("Adicionar refeição") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 ExposedDropdownMenuBox(
@@ -3848,4 +7917,9 @@ private fun AddWorkoutDialog(
         }
     )
 }
+
+
+
+
+
 

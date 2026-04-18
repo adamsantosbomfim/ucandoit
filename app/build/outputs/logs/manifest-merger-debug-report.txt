@@ -11,10 +11,10 @@ INJECTED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\Andr
 	android:name
 		ADDED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:25:13-62
 manifest
-ADDED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:2:1-39:12
-INJECTED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:2:1-39:12
-INJECTED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:2:1-39:12
-INJECTED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:2:1-39:12
+ADDED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:2:1-52:12
+INJECTED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:2:1-52:12
+INJECTED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:2:1-52:12
+INJECTED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:2:1-52:12
 MERGED from [androidx.navigation:navigation-common:2.8.3] C:\Users\Utilizador\.gradle\caches\9.0.0\transforms\941576e26d79c583524c98ad21eff20e\transformed\navigation-common-2.8.3\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.navigation:navigation-runtime:2.8.3] C:\Users\Utilizador\.gradle\caches\9.0.0\transforms\3c53417fd33d6bcca2604aa70ed8388a\transformed\navigation-runtime-2.8.3\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.navigation:navigation-common-ktx:2.8.3] C:\Users\Utilizador\.gradle\caches\9.0.0\transforms\51a5cbca51efe2d49fe3830d4aa9ee68\transformed\navigation-common-ktx-2.8.3\AndroidManifest.xml:2:1-7:12
@@ -111,8 +111,8 @@ ADDED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\Android
 	android:name
 		ADDED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:4:22-74
 application
-ADDED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:6:5-37:19
-INJECTED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:6:5-37:19
+ADDED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:6:5-50:19
+INJECTED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:6:5-50:19
 MERGED from [com.google.firebase:firebase-auth:23.2.0] C:\Users\Utilizador\.gradle\caches\9.0.0\transforms\5335dca69ad2e8fa2c82a872fa5bbf5a\transformed\firebase-auth-23.2.0\AndroidManifest.xml:28:5-73:19
 MERGED from [com.google.firebase:firebase-auth:23.2.0] C:\Users\Utilizador\.gradle\caches\9.0.0\transforms\5335dca69ad2e8fa2c82a872fa5bbf5a\transformed\firebase-auth-23.2.0\AndroidManifest.xml:28:5-73:19
 MERGED from [com.google.firebase:firebase-database:21.0.0] C:\Users\Utilizador\.gradle\caches\9.0.0\transforms\ad35143a608f5b3cbfe96c9612e930f8\transformed\firebase-database-21.0.0\AndroidManifest.xml:25:5-36:19
@@ -197,6 +197,26 @@ ADDED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\Android
 		ADDED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:36:13-37
 	android:name
 		ADDED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:35:13-54
+receiver#com.example.fitnessapp.MotivationWidgetProvider
+ADDED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:38:9-49:20
+	android:label
+		ADDED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:41:13-48
+	android:exported
+		ADDED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:40:13-36
+	android:name
+		ADDED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:39:13-53
+intent-filter#action:name:android.appwidget.action.APPWIDGET_UPDATE
+ADDED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:42:13-44:29
+action#android.appwidget.action.APPWIDGET_UPDATE
+ADDED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:43:17-84
+	android:name
+		ADDED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:43:25-81
+meta-data#android.appwidget.provider
+ADDED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:46:13-48:66
+	android:resource
+		ADDED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:48:17-63
+	android:name
+		ADDED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:47:17-58
 meta-data#android.support.FILE_PROVIDER_PATHS
 ADDED from C:\Users\Utilizador\Downloads\fintessapp_with_db\app\src\main\AndroidManifest.xml:29:13-31:54
 	android:resource
